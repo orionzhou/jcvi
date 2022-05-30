@@ -798,7 +798,13 @@ def tandem_main(
         fp = open(blast_file)
         for row in fp:
             b = BlastLine(row)
+            if b.query not in sizes:
+                logging.error(f"{b.query} not in sizes")
+                sys.exit(1)
             query_len = sizes[b.query]
+            if b.subject not in sizes:
+                logging.error(f"{b.subject} not in sizes")
+                sys.exit(1)
             subject_len = sizes[b.subject]
             if b.hitlen < min(query_len, subject_len) * P / 100.0:
                 continue
