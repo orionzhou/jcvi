@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-
-from __future__ import print_function
 import sys
 import os
 import os.path as op
@@ -82,11 +80,13 @@ class GffLine(object):
         self,
         sline,
         key="ID",
+        parent_key="Parent",
         gff3=True,
         line_index=None,
         strict=True,
         append_source=False,
         append_ftype=False,
+        append_attrib=None,
         score_attrib=False,
         keep_attr_order=True,
         compute_signature=False,
@@ -119,6 +119,7 @@ class GffLine(object):
         )
         # key is not in the gff3 field, this indicates the conversion to accn
         self.key = key  # usually it's `ID=xxxxx;`
+        self.parent_key = parent_key  # usually it's `Parent=xxxxx;`
         self.gff3 = gff3
 
         if append_ftype and self.key in self.attributes:
@@ -135,6 +136,11 @@ class GffLine(object):
             # column in bed file
             self.attributes[self.key][0] = ":".join(
                 (self.source, self.attributes[self.key][0])
+            )
+
+        if append_attrib and append_attrib in self.attributes:
+            self.attributes[self.key][0] = ":".join(
+                (self.attributes[self.key][0], self.attributes[append_attrib][0])
             )
 
         if (
@@ -250,7 +256,11 @@ class GffLine(object):
 
     @property
     def parent(self):
-        return self.attributes["Parent"][0] if "Parent" in self.attributes else None
+        return (
+            self.attributes[self.parent_key][0]
+            if self.parent_key in self.attributes
+            else None
+        )
 
     @property
     def span(self):
@@ -303,9 +313,11 @@ class Gff(LineFile):
         self,
         filename,
         key="ID",
+        parent_key="Parent",
         strict=True,
         append_source=False,
         append_ftype=False,
+        append_attrib=None,
         score_attrib=False,
         keep_attr_order=True,
         make_gff_store=False,
@@ -319,6 +331,7 @@ class Gff(LineFile):
             gff = Gff(
                 self.filename,
                 key=key,
+                parent_key=parent_key,
                 strict=True,
                 append_source=append_source,
                 append_ftype=append_ftype,
@@ -330,9 +343,11 @@ class Gff(LineFile):
                 self.gffstore.append(g)
         else:
             self.key = key
+            self.parent_key = parent_key
             self.strict = strict
             self.append_source = append_source
             self.append_ftype = append_ftype
+            self.append_attrib = append_attrib
             self.score_attrib = score_attrib
             self.keep_attr_order = keep_attr_order
             self.compute_signature = compute_signature
@@ -373,10 +388,12 @@ class Gff(LineFile):
                 yield GffLine(
                     row,
                     key=self.key,
+                    parent_key=self.parent_key,
                     line_index=idx,
                     strict=self.strict,
                     append_source=self.append_source,
                     append_ftype=self.append_ftype,
+                    append_attrib=self.append_attrib,
                     score_attrib=self.score_attrib,
                     keep_attr_order=self.keep_attr_order,
                     compute_signature=self.compute_signature,
@@ -473,9 +490,9 @@ def to_range(obj, score=None, id=None, strand=None):
             seqid=obj.seqid, start=obj.start, end=obj.end, score=_score, id=_id
         )
     elif strand:
-        return (obj.seqid, obj.start, obj.end, obj.strand)
+        return obj.seqid, obj.start, obj.end, obj.strand
 
-    return (obj.seqid, obj.start, obj.end)
+    return obj.seqid, obj.start, obj.end
 
 
 def main():
@@ -634,19 +651,19 @@ def scan_for_valid_codon(codon_span, strand, seqid, genome, type="start"):
         is_valid = is_valid_codon(codon, type=type)
         if not is_valid:
             if type == "start":
-                ## if we are scanning upstream for a valid start codon,
-                ## stop scanning when we encounter a stop
+                # if we are scanning upstream for a valid start codon,
+                # stop scanning when we encounter a stop
                 if is_valid_codon(codon, type="stop"):
-                    return (None, None)
+                    return None, None
             elif type == "stop":
-                ## if we are scanning downstream for a valid stop codon,
-                ## stop scanning when we encounter a start
+                # if we are scanning downstream for a valid stop codon,
+                # stop scanning when we encounter a start
                 if is_valid_codon(codon, type="start"):
-                    return (None, None)
+                    return None, None
             continue
         break
 
-    return (s, e)
+    return s, e
 
 
 def fixpartials(args):
@@ -680,11 +697,11 @@ def fixpartials(args):
     for gene in gff.features_of_type("gene", order_by=("seqid", "start")):
         children = AutoVivification()
         cflag = False
-        transcripts = list(gff.children(gene, level=1, order_by=("start")))
+        transcripts = list(gff.children(gene, level=1, order_by="start"))
         for transcript in transcripts:
             trid, seqid, strand = transcript.id, transcript.seqid, transcript.strand
 
-            for child in gff.children(transcript, order_by=("start")):
+            for child in gff.children(transcript, order_by="start"):
                 ftype = child.featuretype
                 if ftype not in children[trid]:
                     children[trid][ftype] = []
@@ -880,9 +897,7 @@ def cluster(args):
             combinations(
                 [
                     mrna
-                    for mrna in gff.children(
-                        gene, featuretype="mRNA", order_by=("start")
-                    )
+                    for mrna in gff.children(gene, featuretype="mRNA", order_by="start")
                 ],
                 2,
             )
@@ -908,10 +923,10 @@ def cluster(args):
                             )
                         )
 
-                    if all(r == True for r in res):
+                    if all(res):
                         g.join((mrna1.id, mrna1s), (mrna2.id, mrna2s))
         else:
-            for mrna1 in gff.children(gene, featuretype="mRNA", order_by=("start")):
+            for mrna1 in gff.children(gene, featuretype="mRNA", order_by="start"):
                 mrna1s = gff.children_bp(mrna1, child_featuretype="exon")
                 g.join((mrna1.id, mrna1s))
 
@@ -1024,8 +1039,6 @@ def gb(args):
     Convert GFF3 to Genbank format. Recipe taken from:
     <http://www.biostars.org/p/2492/>
     """
-    from Bio.Alphabet import generic_dna
-
     try:
         from BCBio import GFF
     except ImportError:
@@ -1042,7 +1055,7 @@ def gb(args):
     gff_file, fasta_file = args
     pf = op.splitext(gff_file)[0]
     out_file = pf + ".gb"
-    fasta_input = SeqIO.to_dict(SeqIO.parse(fasta_file, "fasta", generic_dna))
+    fasta_input = SeqIO.to_dict(SeqIO.parse(fasta_file, "fasta"))
     gff_iter = GFF.parse(gff_file, fasta_input)
     SeqIO.write(gff_iter, out_file, "genbank")
 
@@ -1216,7 +1229,7 @@ def filter(args):
     fw = must_open(opts.outfile, "w")
     for g in gffdb.features_of_type(ptype, order_by=("seqid", "start")):
         if ptype != otype:
-            feats = list(gffdb.children(g, featuretype=otype, order_by=("start")))
+            feats = list(gffdb.children(g, featuretype=otype, order_by="start"))
             ok_feats = [f for f in feats if f.id not in bad]
             if len(ok_feats) > 0:
                 g.keep_order = True
@@ -1224,13 +1237,13 @@ def filter(args):
                 for feat in ok_feats:
                     feat.keep_order = True
                     print(feat, file=fw)
-                    for child in gffdb.children(feat, order_by=("start")):
+                    for child in gffdb.children(feat, order_by="start"):
                         child.keep_order = True
                         print(child, file=fw)
         else:
             if g.id not in bad:
                 print(g, file=fw)
-                for child in gffdb.children(g, order_by=("start")):
+                for child in gffdb.children(g, order_by="start"):
                     print(child, file=fw)
     fw.close()
 
@@ -1532,7 +1545,7 @@ def format(args):
 
     Read in the gff and print it out, changing seqid, etc.
     """
-    from jcvi.formats.obo import load_GODag, validate_term
+    from jcvi.formats.obo import GODag_from_SO, validate_term
 
     valid_multiparent_ops = ["split", "merge"]
 
@@ -1837,7 +1850,7 @@ def format(args):
                     cds_track[cds_parent].append((g.start, g.end))
 
     if opts.verifySO:
-        so = load_GODag()
+        so, _ = GODag_from_SO()
         valid_soterm = {}
 
     fw = must_open(outfile, "w")
@@ -2082,7 +2095,7 @@ def fixboundaries(args):
         if f.featuretype == opts.type:
             child_coords = []
             for cftype in opts.child_ftype.split(","):
-                for c in gffdb.children(f, featuretype=cftype, order_by=("start")):
+                for c in gffdb.children(f, featuretype=cftype, order_by="start"):
                     child_coords.append((c.start, c.stop))
             f.start, f.stop = range_minmax(child_coords)
 
@@ -2722,7 +2735,7 @@ def extract(args):
 
     if opts.children:
         assert types is not None or names is not None, "Must set --names or --types"
-        if names == None:
+        if names is None:
             names = list()
         populate_children(outfile, names, gffile, iter=opts.children, types=types)
         return
@@ -2987,6 +3000,11 @@ def bed(args):
         help="Append GFF feature type to extracted key value",
     )
     p.add_option(
+        "--append_attrib",
+        default=None,
+        help="Append attribute to extracted key value",
+    )
+    p.add_option(
         "--nosort",
         default=False,
         action="store_true",
@@ -2997,6 +3015,11 @@ def bed(args):
         default=False,
         action="store_true",
         help="Only retains a single transcript per gene",
+    )
+    p.add_option(
+        "--parent_key",
+        default="Parent",
+        help="Parent gene key to group with --primary_only",
     )
     p.set_outfile()
 
@@ -3011,6 +3034,7 @@ def bed(args):
     source = opts.source or set()
     span = opts.span
     primary_only = opts.primary_only
+    parent_key = opts.parent_key
 
     if opts.type:
         type = set(x.strip() for x in opts.type.split(","))
@@ -3020,8 +3044,10 @@ def bed(args):
     gff = Gff(
         gffile,
         key=key,
+        parent_key=parent_key,
         append_source=opts.append_source,
         append_ftype=opts.append_ftype,
+        append_attrib=opts.append_attrib,
         score_attrib=opts.score_attrib,
     )
     b = Bed()
@@ -3050,7 +3076,9 @@ def bed(args):
     sorted = not opts.nosort
     b.print_to_file(opts.outfile, sorted=sorted)
     logging.debug(
-        "Extracted {0} features (type={1} id={2})".format(len(b), ",".join(type), key)
+        "Extracted {} features (type={} id={} parent={})".format(
+            len(b), ",".join(type), key, parent_key
+        )
     )
     if primary_only:
         logging.debug("Skipped non-primary: %d", skipped_non_primary)
@@ -3400,14 +3428,10 @@ def parse_feature_param(feature):
                 "Error: upstream len `" + str(upstream_len) + "` should be > 0",
             )
 
-        if not upstream_site in valid_upstream_sites:
+        if upstream_site not in valid_upstream_sites:
             flag, error_msg = (
                 1,
-                "Error: upstream site `"
-                + upstream_site
-                + "` not valid."
-                + " Please choose from "
-                + valid_upstream_sites,
+                f"Error: upstream site `{upstream_site}` not valid. Please choose from {valid_upstream_sites}",
             )
     elif feature == "CDS":
         parents, children = "mRNA", "CDS"

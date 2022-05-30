@@ -5,8 +5,6 @@
 Genbank AGP file format, see spec here
 http://www.ncbi.nlm.nih.gov/projects/genome/assembly/agp
 """
-from __future__ import print_function
-
 import os
 import re
 import sys
@@ -30,10 +28,13 @@ from jcvi.utils.range import range_intersect
 from jcvi.apps.base import OptionParser, OptionGroup, ActionDispatcher, need_update
 
 
+Supported_AGP_Version = "2.1"
+AGP_Version_Pragma = "##agp-version " + Supported_AGP_Version
 Valid_component_type = list("ADFGNOPUW")
 
 Valid_gap_type = (
-    "fragment",
+    "scaffold",
+    "fragment",  # in v2.0, obsolete in v2.1
     "clone",  # in v1.1, obsolete in v2.0
     "contig",
     "centromere",
@@ -41,7 +42,7 @@ Valid_gap_type = (
     "heterochromatin",
     "telomere",
     "repeat",  # in both versions
-    "scaffold",
+    "contamination",
 )  # new in v2.0
 
 Valid_orientation = ("+", "-", "0", "?", "na")
@@ -56,6 +57,8 @@ Valid_evidence = (
     "within_clone",
     "clone_contig",
     "map",
+    "pcr",  # new in v2.1
+    "proximity_ligation",  # new in v2.1
     "strobe",
     "unspecified",
 )
@@ -237,6 +240,12 @@ class AGPLine(object):
                 self.object_span,
                 self.gap_length,
             )
+            assert (
+                self.gap_type in Valid_gap_type
+            ), "gap_type must be one of {}, you have {}".format(
+                "|".join(Valid_gap_type), self.gap_type
+            )
+
             assert all(
                 x in Valid_evidence for x in self.linkage_evidence
             ), "linkage_evidence must be one of {0}, you have {1}".format(
@@ -351,6 +360,7 @@ class AGP(LineFile):
     def print_header(
         cls, fw=sys.stdout, organism=None, taxid=None, source=None, comment=None
     ):
+        print(AGP_Version_Pragma, file=fw)
         # these comments are entirely optional, modeled after maize AGP
         if organism:
             print("# ORGANISM: {0}".format(organism), file=fw)
@@ -1001,7 +1011,7 @@ def compress(args):
         print(a, file=fw)
 
 
-def map_one_scaffold_1way(scaffold_name, scaffold, genome, orientation="+"):
+def map_one_scaffold_1way(scaffold, genome, orientation="+"):
     if orientation == "-":
         scaffold = scaffold.reverse_complement()
 
@@ -1018,10 +1028,10 @@ def map_one_scaffold_1way(scaffold_name, scaffold, genome, orientation="+"):
 def map_one_scaffold(opts):
     scaffold_name, scaffold, genome = opts
     scaffold = scaffold.seq
-    obj_name, obj_idx, objo = map_one_scaffold_1way(scaffold_name, scaffold, genome)
+    obj_name, obj_idx, objo = map_one_scaffold_1way(scaffold, genome)
     if obj_name == -1:
         obj_name, obj_idx, objo = map_one_scaffold_1way(
-            scaffold_name, scaffold, genome, orientation="-"
+            scaffold, genome, orientation="-"
         )
     if obj_name == -1:
         return ""
@@ -1140,6 +1150,7 @@ def frombed(args):
         type="int",
         help="Insert gaps of size",
     )
+    p.add_option("--evidence", default="map", help="Linkage evidence to add in AGP")
     opts, args = p.parse_args(args)
 
     if len(args) != 1:
@@ -1167,7 +1178,7 @@ def frombed(args):
                             gapsize,
                             "scaffold",
                             "yes",
-                            "map",
+                            opts.evidence,
                         )
                     ),
                     file=fw,
@@ -1231,7 +1242,7 @@ def swap(args):
 
     fw.close()
     # Reindex
-    idxagpfile = reindex([newagpfile, "--inplace"])
+    reindex([newagpfile, "--inplace"])
 
     return newagpfile
 
@@ -1504,7 +1515,7 @@ def mask(args):
     fw.close()
 
     # Reindex
-    idxagpfile = reindex([newagpfile, "--inplace"])
+    reindex([newagpfile, "--inplace"])
 
     return newagpfile
 
@@ -1563,7 +1574,7 @@ def reindex(args):
 
     # Last step: validate the new agpfile
     fw.close()
-    agp = AGP(newagpfile, validate=True)
+    AGP(newagpfile, validate=True)
 
     if inplace:
         shutil.move(newagpfile, agpfile)
@@ -2132,12 +2143,10 @@ def validate(args):
     p = OptionParser(validate.__doc__)
 
     opts, args = p.parse_args(args)
+    if len(args) < 3:
+        sys.exit(not p.print_help())
 
-    try:
-        agpfile, componentfasta, targetfasta = args
-    except Exception as e:
-        sys.exit(p.print_help())
-
+    agpfile, componentfasta, targetfasta = args
     agp = AGP(agpfile)
     build = Fasta(targetfasta)
     bacs = Fasta(componentfasta, index=False)

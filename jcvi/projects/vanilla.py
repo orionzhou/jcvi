@@ -4,15 +4,13 @@
 """
 Plotting scripts for the vanilla genome paper.
 """
-from __future__ import print_function
-
 import logging
 import sys
 
 from jcvi.apps.base import ActionDispatcher, OptionParser
 from jcvi.compara.synteny import AnchorFile, check_beds
 from jcvi.formats.base import get_number
-from jcvi.formats.bed import Bed, BedLine
+from jcvi.formats.bed import Bed
 from jcvi.graphics.base import normalize_axes, panel_labels, plt, savefig
 from jcvi.graphics.glyph import TextCircle
 from jcvi.graphics.synteny import Synteny, draw_gene_legend
@@ -58,7 +56,6 @@ def phylogeny(args):
     ax1 = fig.add_axes([0, 0.4, 1, 0.6])
     ax2 = fig.add_axes([0.12, 0.065, 0.8, 0.3])
 
-    supportcolor = "k"
     margin, rmargin = 0.1, 0.2  # Left and right margin
     leafinfo = LeafInfoFile("leafinfo.csv").cache
     wgdinfo = WGDInfoFile("wgdinfo.csv").cache
@@ -134,7 +131,6 @@ def tree(args):
     fig = plt.figure(1, (iopts.w, iopts.h))
     ax1 = fig.add_axes([0, 0, 1, 1])
 
-    supportcolor = "k"
     margin, rmargin = 0.1, 0.2  # Left and right margin
     leafinfo = LeafInfoFile("leafinfo.csv").cache
     wgdinfo = WGDInfoFile("wgdinfo.csv").cache
@@ -242,7 +238,7 @@ def synteny(args):
     )
 
     # Panel B
-    draw_ploidy(fig, ax2, iopts, blocksfile, allbedfile, blockslayout)
+    draw_ploidy(fig, ax2, blocksfile, allbedfile, blockslayout)
 
     normalize_axes([root, ax1, ax2])
     labels = ((0.05, 0.95, "A"), (0.05, 0.5, "B"))
@@ -302,7 +298,7 @@ def microsynteny(args):
     fig = plt.figure(1, (iopts.w, iopts.h))
     ax2 = fig.add_axes([0, 0, 1, 1])
 
-    draw_ploidy(fig, ax2, iopts, blocksfile, allbedfile, blockslayout)
+    draw_ploidy(fig, ax2, blocksfile, allbedfile, blockslayout)
 
     normalize_axes([ax2])
 
@@ -327,23 +323,21 @@ def ancestral(args):
     qbed, sbed, qorder, sorder, is_self = check_beds(anchorsfile, p, opts)
 
     # We focus on the following chromosome pairs
-    target_pairs = set(
-        (
-            (1, 1),
-            (1, 6),
-            (1, 8),
-            (1, 13),
-            (2, 4),
-            (3, 12),
-            (3, 14),
-            (5, 6),
-            (5, 8),
-            (7, 9),
-            (7, 11),
-            (9, 10),
-            (10, 11),
-        )
-    )
+    target_pairs = {
+        (1, 1),
+        (1, 6),
+        (1, 8),
+        (1, 13),
+        (2, 4),
+        (3, 12),
+        (3, 14),
+        (5, 6),
+        (5, 8),
+        (7, 9),
+        (7, 11),
+        (9, 10),
+        (10, 11),
+    }
 
     def get_target(achr, bchr):
         if "chr" not in achr and "chr" not in bchr:
@@ -400,7 +394,7 @@ def ploidy(args):
     fig = plt.figure(1, (iopts.w, iopts.h))
     root = fig.add_axes([0, 0, 1, 1])
 
-    draw_ploidy(fig, root, iopts, blocksfile, bedfile, blockslayout)
+    draw_ploidy(fig, root, blocksfile, bedfile, blockslayout)
 
     root.set_xlim(0, 1)
     root.set_ylim(0, 1)
@@ -411,7 +405,7 @@ def ploidy(args):
     savefig(image_name, dpi=iopts.dpi, iopts=iopts)
 
 
-def draw_ploidy(fig, root, iopts, blocksfile, bedfile, blockslayout):
+def draw_ploidy(fig, root, blocksfile, bedfile, blockslayout):
     switchidsfile = "switch.ids"
     Synteny(
         fig,

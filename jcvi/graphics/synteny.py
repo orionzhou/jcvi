@@ -9,19 +9,25 @@ the positions of tracks. For example:
 
 #x, y, rotation, ha, va, color, ratio
 0.5, 0.6, 0, left, center, g
-0.25, 0.7, 45, top, center, m
+0.25, 0.7, 45, center, center, m
 
 With the row ordering corresponding to the column ordering in the MCscan output.
+
+For "ha" (horizontal alignment), accepted values are: left|right|leftalign|rightalign|center|""(empty)
+For "va" (vertical alignment), accepted values are: top|bottom|center|""(empty)
 """
 
 import sys
 import logging
 import numpy as np
 
+from typing import Optional
+
 from jcvi.compara.synteny import BlockFile
 from jcvi.formats.bed import Bed
 from jcvi.formats.base import DictFile
 from jcvi.utils.cbook import human_size
+from jcvi.utils.validator import validate_in_choices, validate_in_range
 from jcvi.apps.base import OptionParser
 
 from jcvi.graphics.glyph import (
@@ -42,6 +48,11 @@ from jcvi.graphics.base import (
 )
 
 
+HorizontalAlignments = ("left", "right", "leftalign", "rightalign", "center", "")
+VerticalAlignments = ("top", "bottom", "center", "")
+CanvasSize = 0.65
+
+
 class LayoutLine(object):
     def __init__(self, row, delimiter=","):
         self.hidden = row[0] == "*"
@@ -50,10 +61,16 @@ class LayoutLine(object):
         args = row.rstrip().split(delimiter)
         args = [x.strip() for x in args]
         self.x = float(args[0])
+        validate_in_range(self.x, 0, 1, "XPosition(x) column")
         self.y = float(args[1])
+        validate_in_range(self.y, 0, 1, "YPosition(y) column")
         self.rotation = int(args[2])
         self.ha = args[3]
+        validate_in_choices(
+            self.ha, HorizontalAlignments, "HorizontaAlignment(ha) column"
+        )
         self.va = args[4]
+        validate_in_choices(self.va, VerticalAlignments, "VerticalAlignment(va) column")
         self.color = args[5]
         self.ratio = 1
         if len(args) > 6:
@@ -90,8 +107,7 @@ class Layout(AbstractLayout):
             else:
                 self.append(LayoutLine(row, delimiter=delimiter))
 
-        if 3 <= len(self) <= 8:
-            self.assign_colors()
+        self.assign_colors()
 
 
 class Shade(object):
@@ -170,6 +186,7 @@ class Region(object):
         switch=None,
         chr_label=True,
         loc_label=True,
+        gene_labels: Optional[set] = None,
         genelabelsize=0,
         pad=0.05,
         vpad=0.015,
@@ -249,7 +266,7 @@ class Region(object):
                 zorder=zorder,
             )
             gp.set_transform(tr)
-            if genelabelsize:
+            if genelabelsize and (not gene_labels or gene_name in gene_labels):
                 ax.text(
                     (x1 + x2) / 2,
                     y + height / 2 + genelabelsize * vpad / 3,
@@ -285,8 +302,14 @@ class Region(object):
         if ha == "left":
             xx = xstart - hpad
             ha = "right"
+        elif ha == "leftalign":
+            xx = 0.5 - CanvasSize / 2 - hpad
+            ha = "right"
         elif ha == "right":
             xx = xend + hpad
+            ha = "left"
+        elif ha == "rightalign":
+            xx = 0.5 + CanvasSize / 2 + hpad
             ha = "left"
         else:
             xx = x
@@ -331,7 +354,7 @@ class Region(object):
                         loc_label,
                         color="lightslategrey",
                         size=10,
-                        **kwargs
+                        **kwargs,
                     )
                 else:
                     ax.text(lx, ly, chr_label, color=layout.color, **kwargs)
@@ -356,6 +379,7 @@ class Synteny(object):
         extra_features=None,
         chr_label=True,
         loc_label=True,
+        gene_labels: Optional[set] = None,
         genelabelsize=0,
         pad=0.05,
         vpad=0.015,
@@ -393,7 +417,7 @@ class Synteny(object):
                 extras.append(ef_pruned)
 
         maxspan = max(exts, key=lambda x: x[-1])[-1]
-        scale = maxspan / 0.65
+        scale = maxspan / CanvasSize
 
         self.gg = gg = {}
         self.rr = []
@@ -413,6 +437,7 @@ class Synteny(object):
                 bed,
                 scale,
                 switch,
+                gene_labels=gene_labels,
                 genelabelsize=genelabelsize,
                 chr_label=chr_label,
                 loc_label=loc_label,
@@ -549,6 +574,10 @@ def main():
     p.add_option("--tree", help="Display trees on the bottom of the figure")
     p.add_option("--extra", help="Extra features in BED format")
     p.add_option(
+        "--genelabels",
+        help='Show only these gene labels, separated by comma. Example: "At1g12340,At5g54690"',
+    )
+    p.add_option(
         "--genelabelsize",
         default=0,
         type="int",
@@ -588,6 +617,7 @@ def main():
     datafile, bedfile, layoutfile = args
     switch = opts.switch
     tree = opts.tree
+    gene_labels = None if not opts.genelabels else set(opts.genelabels.split(","))
 
     pf = datafile.rsplit(".", 1)[0]
     fig = plt.figure(1, (iopts.w, iopts.h))
@@ -601,6 +631,7 @@ def main():
         switch=switch,
         tree=tree,
         extra_features=opts.extra,
+        gene_labels=gene_labels,
         genelabelsize=opts.genelabelsize,
         scalebar=opts.scalebar,
         shadestyle=opts.shadestyle,

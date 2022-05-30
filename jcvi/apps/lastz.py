@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-from __future__ import print_function
 import os.path as op
 import sys
 import logging
@@ -185,7 +184,10 @@ def main():
     )
 
     p.add_option(
-        "--format", default="BLASTN-", choices=supported_formats, help="Ooutput format",
+        "--format",
+        default="BLASTN-",
+        choices=supported_formats,
+        help="Ooutput format",
     )
     p.add_option("--path", dest="lastz_path", default=None, help="specify LASTZ path")
     p.add_option(

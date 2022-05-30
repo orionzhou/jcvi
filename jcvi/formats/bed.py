@@ -89,7 +89,7 @@ class BedLine(object):
     @property
     def range(self):
         strand = self.strand or "+"
-        return (self.seqid, self.start, self.end, strand)
+        return self.seqid, self.start, self.end, strand
 
     @property
     def tag(self):
@@ -345,11 +345,12 @@ class BedEvaluate(object):
     def __str__(self):
         from jcvi.utils.table import tabulate
 
-        table = {}
-        table[("Prediction-True", "Reality-True")] = self.TP
-        table[("Prediction-True", "Reality-False")] = self.FP
-        table[("Prediction-False", "Reality-True")] = self.FN
-        table[("Prediction-False", "Reality-False")] = self.TN
+        table = {
+            ("Prediction-True", "Reality-True"): self.TP,
+            ("Prediction-True", "Reality-False"): self.FP,
+            ("Prediction-False", "Reality-True"): self.FN,
+            ("Prediction-False", "Reality-False"): self.TN,
+        }
         msg = str(tabulate(table))
 
         msg += "\nSensitivity [TP / (TP + FN)]: {0:.1f} %\n".format(
@@ -470,9 +471,46 @@ def main():
         ("density", "calculates density of features per seqid"),
         ("tiling", "compute the minimum tiling path"),
         ("format", "reformat BED file"),
+        ("closest", "find closest BED feature"),
     )
     p = ActionDispatcher(actions)
     p.dispatch(globals())
+
+
+def closest(args):
+    """
+    %prog closest input.bed features.bed
+
+    Find the closest feature in `features.bed` to `input.bed`.
+    `features.bed` must be sorted using `jcvi.formats.bed sort`.
+    """
+    from pybedtools import BedTool
+
+    p = OptionParser(closest.__doc__)
+    p.add_option("--maxdist", default=5000, help="Maximum distance")
+    p.set_outfile()
+    opts, args = p.parse_args(args)
+
+    if len(args) != 2:
+        sys.exit(not p.print_help())
+
+    inputbed, featuresbed = args
+    maxdist = opts.maxdist
+    sort([inputbed, "-i"])
+    inputs = BedTool(inputbed)
+    features = BedTool(featuresbed)
+    nearby = inputs.closest(features, d=True, t="first", stream=True)
+    accn_column = inputs.field_count() + features.field_count() - 3
+    for f in nearby:
+        seqid = f[0]
+        start = f[1]
+        end = f[2]
+        accn = f[3]
+        feat = f[accn_column].split(":")[0]
+        dist = int(f[-1])
+        if dist > maxdist:
+            feat = "."
+        print("\t".join((seqid, start, end, "{}:{}".format(accn, feat))))
 
 
 def format(args):
@@ -483,9 +521,7 @@ def format(args):
     """
     p = OptionParser(format.__doc__)
     p.add_option("--prefix", help="Add prefix to name column (4th)")
-    p.add_option(
-        "--switch", help="Switch seqids based on two-column file"
-    )
+    p.add_option("--switch", help="Switch seqids based on two-column file")
     p.set_outfile()
     opts, args = p.parse_args(args)
 
@@ -909,7 +945,7 @@ def seqids(args):
     if pf:
         s = [x for x in s if x.startswith(pf)]
     if exclude:
-        s = [x for x in s if not exclude in x]
+        s = [x for x in s if exclude not in x]
     s = s[: opts.maxn]
     print(",".join(s))
 
@@ -1077,7 +1113,7 @@ def mergebydepth(args):
 
     bedfile, fastafile = args
     mindepth = opts.mindepth
-    bedgraph = make_bedgraph(bedfile)
+    bedgraph = make_bedgraph(bedfile, fastafile)
 
     bedgraphfiltered = bedgraph + ".d{0}".format(mindepth)
     if need_update(bedgraph, bedgraphfiltered):
@@ -1617,7 +1653,7 @@ def mergeBed(bedfile, d=0, sorted=False, nms=False, s=False, scores=None, delim=
             "antimode",
             "collapse",
         )
-        if not scores in valid_opts:
+        if scores not in valid_opts:
             scores = "mean"
         cmd += " -scores {0}".format(scores)
 
@@ -2277,6 +2313,12 @@ def sort(args):
         action="store_true",
         help="Sort based on the accessions",
     )
+    p.add_option(
+        "--num",
+        default=False,
+        action="store_true",
+        help="Numerically sort seqid column, e.g. chr1,chr2,...",
+    )
     p.set_outfile(outfile=None)
     p.set_tmpdir()
     opts, args = p.parse_args(args)
@@ -2286,6 +2328,11 @@ def sort(args):
 
     (bedfile,) = args
     inplace = opts.inplace
+
+    if opts.num:
+        bed = Bed(bedfile)
+        bed.print_to_file(opts.outfile or "stdout", sorted=True)
+        return
 
     if not inplace and ".sorted." in bedfile:
         return bedfile
@@ -2475,7 +2522,7 @@ def flanking(args):
     for atom in flankingbed:
         print(str(atom), file=fw)
 
-    return (position, flankingbed)
+    return position, flankingbed
 
 
 if __name__ == "__main__":

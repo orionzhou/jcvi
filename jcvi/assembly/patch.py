@@ -14,6 +14,7 @@ There are a few techniques, used in curating medicago assembly.
 5. Find gaps in optical map
 6. Insert unplaced scaffolds using mates
 """
+import os.path as op
 import sys
 import math
 import logging
@@ -22,15 +23,20 @@ from collections import defaultdict
 from itertools import groupby
 from more_itertools import pairwise, roundrobin
 
-from jcvi.formats.bed import Bed, complementBed, mergeBed, fastaFromBed, summary
+from jcvi.formats.bed import (
+    Bed,
+    BedLine,
+    complementBed,
+    mergeBed,
+    fastaFromBed,
+    summary,
+)
 from jcvi.formats.blast import BlastSlow
 from jcvi.formats.sizes import Sizes
 from jcvi.utils.range import (
     range_parse,
     range_distance,
-    ranges_depth,
     range_minmax,
-    range_overlap,
     range_merge,
     range_closest,
     range_interleave,
@@ -143,10 +149,7 @@ def pastegenes(args):
                 distance_to_right, oo = range_distance(cur, rightr)
                 span, oo = range_distance(leftr, rightr)
 
-                if distance_to_left <= distance_to_right and distance_to_left > 0:
-                    label = "LEFT"
-                else:
-                    label = "RIGHT"
+                label = "LEFT" if 0 < distance_to_left <= distance_to_right else "RIGHT"
 
                 if 0 < span <= maxsize:
                     print(
@@ -409,174 +412,6 @@ def insert(args):
     # Clean-up
     toclean = [gpbedfile, agpfile, maskedagpfile, maskedbedfile]
     FileShredder(toclean)
-
-
-def bambus(args):
-    """
-    %prog bambus bambus.bed bambus.mates total.fasta
-
-    Insert unplaced scaffolds based on mates.
-    """
-    from jcvi.formats.bed import BedLine
-    from jcvi.formats.posmap import MatesFile
-
-    p = OptionParser(bambus.__doc__)
-    p.add_option(
-        "--prefix",
-        default="scaffold",
-        help="Prefix of the unplaced scaffolds",
-    )
-    p.add_option(
-        "--minlinks",
-        default=3,
-        type="int",
-        help="Minimum number of links to place",
-    )
-    opts, args = p.parse_args(args)
-
-    if len(args) != 3:
-        sys.exit(not p.print_help())
-
-    bedfile, matesfile, fastafile = args
-    pf = matesfile.rsplit(".", 1)[0]
-    logfile = pf + ".log"
-    log = open(logfile, "w")
-
-    mf = MatesFile(matesfile)
-    maxdist = max(x.max for x in mf.libraries.values())
-    logging.debug("Max separation: {0}".format(maxdist))
-
-    prefix = opts.prefix
-    minlinks = opts.minlinks
-
-    is_unplaced = lambda x: x.startswith(prefix)
-    bed = Bed(bedfile, sorted=False)
-    beds = []
-    unplaced = defaultdict(list)
-
-    for a, b in pairwise(bed):
-        aname, bname = a.accn, b.accn
-        aseqid, bseqid = a.seqid, b.seqid
-
-        if aname not in mf:
-            continue
-
-        pa, la = mf[aname]
-        if pa != bname:
-            continue
-
-        ia = is_unplaced(aseqid)
-        ib = is_unplaced(bseqid)
-        if ia == ib:
-            continue
-
-        if ia:
-            a, b = b, a
-
-        unplaced[b.seqid].append((a, b))
-        beds.extend([a, b])
-
-    sizes = Sizes(fastafile)
-    candidatebed = Bed()
-    cbeds = []
-    # For each unplaced scaffold, find most likely placement and orientation
-    for scf, beds in sorted(unplaced.items()):
-        print(file=log)
-        ranges = []
-        for a, b in beds:
-            aname, astrand = a.accn, a.strand
-            bname, bstrand = b.accn, b.strand
-            aseqid, bseqid = a.seqid, b.seqid
-            pa, lib = mf[aname]
-
-            print(a, file=log)
-            print(b, file=log)
-
-            flip_b = astrand == bstrand
-            fbstrand = "-" if flip_b else "+"
-            if flip_b:
-                b.reverse_complement(sizes)
-
-            lmin, lmax = lib.min, lib.max
-
-            L = sizes.get_size(scf)
-            assert astrand in ("+", "-")
-            if astrand == "+":
-                offset = a.start - b.end
-                sstart, sstop = offset + lmin, offset + lmax
-            else:
-                offset = a.end - b.start + L
-                sstart, sstop = offset - lmax, offset - lmin
-
-            # Prevent out of range error
-            size = sizes.get_size(aseqid)
-            sstart = max(0, sstart)
-            sstop = max(0, sstop)
-            sstart = min(size - 1, sstart)
-            sstop = min(size - 1, sstop)
-
-            start_range = (aseqid, sstart, sstop, scf, 1, fbstrand)
-            print("*" + "\t".join(str(x) for x in start_range), file=log)
-            ranges.append(start_range)
-
-        mranges = [x[:3] for x in ranges]
-        # Determine placement by finding the interval with the most support
-        rd = ranges_depth(mranges, sizes.mapping, verbose=False)
-        alldepths = []
-        for depth in rd:
-            alldepths.extend(depth)
-        print(alldepths, file=log)
-
-        maxdepth = max(alldepths, key=lambda x: x[-1])[-1]
-        if maxdepth < minlinks:
-            print("Insufficient links ({0} < {1})".format(maxdepth, minlinks), file=log)
-            continue
-
-        candidates = [x for x in alldepths if x[-1] == maxdepth]
-        nseqids = len(set(x[0] for x in candidates))
-        if nseqids != 1:
-            msg = "Multiple conflicting candidates found"
-            print(msg, file=log)
-            continue
-
-        seqid, mmin, mmax, depth = candidates[0]
-        mmin, mmax = range_minmax([x[1:3] for x in candidates])
-
-        if mmin >= mmax:
-            msg = "Invalid (min, max) range"
-            print("Invalid (min, max) range", file=log)
-            continue
-
-        if (mmax - mmin) > maxdist:
-            msg = "(min, max) distance greater than library maxdist"
-            print(msg, file=log)
-            continue
-
-        # Determine orientation by voting
-        nplus, nminus = 0, 0
-        arange = (seqid, mmin, mmax)
-        for sid, start, end, sf, sc, fbstrand in ranges:
-            brange = (sid, start, end)
-            if range_overlap(arange, brange):
-                if fbstrand == "+":
-                    nplus += 1
-                else:
-                    nminus += 1
-
-        fbstrand = "+" if nplus >= nminus else "-"
-
-        candidate = (seqid, mmin, mmax, scf, depth, fbstrand)
-        bedline = BedLine("\t".join((str(x) for x in candidate)))
-        cbeds.append(bedline)
-        print("Plus: {0}, Minus: {1}".format(nplus, nminus), file=log)
-        print(candidate, file=log)
-
-    candidatebed.extend(cbeds)
-    logging.debug("A total of {0} scaffolds can be placed.".format(len(candidatebed)))
-    log.close()
-
-    candidatebedfile = pf + ".candidate.bed"
-    candidatebed.print_to_file(candidatebedfile, sorted=True)
 
 
 def gaps(args):
@@ -976,6 +811,8 @@ def refine(args):
     - Break in the middle of the region
     - Break at the closest gap (--closest)
     """
+    from pybedtools import BedTool
+
     p = OptionParser(refine.__doc__)
     p.add_option(
         "--closest",
@@ -983,6 +820,7 @@ def refine(args):
         action="store_true",
         help="In case of no gaps, use closest",
     )
+    p.set_outfile("auto")
     opts, args = p.parse_args(args)
 
     if len(args) != 2:
@@ -991,20 +829,18 @@ def refine(args):
     breakpointsbed, gapsbed = args
     ncols = len(next(open(breakpointsbed)).split())
     logging.debug("File %s contains %d columns.", breakpointsbed, ncols)
-    cmd = "intersectBed -wao -a {0} -b {1}".format(breakpointsbed, gapsbed)
+    a = BedTool(breakpointsbed)
+    b = BedTool(gapsbed)
+    o = a.intersect(b, wao=True)
 
-    pf = "{0}.{1}".format(breakpointsbed.split(".")[0], gapsbed.split(".")[0])
-    ingapsbed = pf + ".bed"
-    sh(cmd, outfile=ingapsbed)
-
-    fp = open(ingapsbed)
-    data = [x.split() for x in fp]
-
+    pf = "{0}.{1}".format(
+        op.basename(breakpointsbed).split(".")[0], op.basename(gapsbed).split(".")[0]
+    )
     nogapsbed = pf + ".nogaps.bed"
     largestgapsbed = pf + ".largestgaps.bed"
     nogapsfw = open(nogapsbed, "w")
     largestgapsfw = open(largestgapsbed, "w")
-    for b, gaps in groupby(data, key=lambda x: x[:ncols]):
+    for b, gaps in groupby(o, key=lambda x: x[:ncols]):
         gaps = list(gaps)
         gap = gaps[0]
         if len(gaps) == 1 and gap[-1] == "0":
@@ -1014,7 +850,8 @@ def refine(args):
 
         gaps = [(int(x[-1]), x) for x in gaps]
         maxgap = max(gaps)[1]
-        print("\t".join(maxgap), file=largestgapsfw)
+        # Write the gap interval that's intersected (often from column 4 and on)
+        print("\t".join(maxgap[ncols:]), file=largestgapsfw)
 
     nogapsfw.close()
     largestgapsfw.close()
@@ -1039,7 +876,7 @@ def refine(args):
         beds += [pointbed]
         toclean += [pointbed]
 
-    refinedbed = pf + ".refined.bed"
+    refinedbed = pf + ".refined.bed" if opts.outfile == "auto" else opts.outfile
     FileMerger(beds, outfile=refinedbed).merge()
 
     # Clean-up
@@ -1096,7 +933,6 @@ def patcher(args):
     otherbed = uniq([otherbed])
 
     pf = backbonebed.split(".")[0]
-    key = lambda x: (x.seqid, x.start, x.end)
 
     # Make a uniq bed keeping backbone at redundant intervals
     cmd = "intersectBed -v -wa"

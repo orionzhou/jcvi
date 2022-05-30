@@ -6,8 +6,6 @@ Builds the queries for Globus and BioMart servie, usefu for extraction of
 phytozome data sets.  Certain portion of the codes are ported from R package
 `biomaRt` (thanks).
 """
-from __future__ import print_function
-
 import sys
 import urllib
 import logging
@@ -68,7 +66,7 @@ class PhytozomePath(dict):
         else:
             self.name = element.attrib["name"]
         self.tag = tag
-        for child in element.getchildren():
+        for child in list(element):
             if child.tag not in self.TAGS_OF_INTEREST:
                 continue
             child = PhytozomePath(child)
@@ -76,8 +74,7 @@ class PhytozomePath(dict):
 
     @property
     def has_genome_release(self):
-        """Only the folders that contain both `assembly` and `annotation` are of interest here.
-        """
+        """Only the folders that contain both `assembly` and `annotation` are of interest here."""
         return "assembly" in self and "annotation" in self
 
     def download(self, name, base_url, cookies, downloader=None):

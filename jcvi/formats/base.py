@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-from __future__ import print_function
 import os
 import os.path as op
 import math
@@ -16,13 +15,10 @@ from jcvi.apps.base import (
     OptionParser,
     ActionDispatcher,
     sh,
-    debug,
     need_update,
     mkdir,
     popen,
 )
-
-debug()
 
 
 FastaExt = ("fasta", "fa", "fna", "cds", "pep", "faa", "fsa", "seq", "nt", "aa")
@@ -166,12 +162,11 @@ class FileMerger(object):
         files = " ".join(self.filelist)
         ingz, outgz = self.ingz, self.outgz
         if ingz and outgz:  # can merge gz files directly
-            cmd = "cat {0} > {1}".format(files, outfile)
-            sh(cmd)
+            cmd = "cat {}".format(files)
         else:
             cmd = "zcat" if self.ingz else "cat"
             cmd += " " + files
-            sh(cmd, outfile=outfile)
+        sh(cmd, outfile=outfile)
 
         return outfile
 
@@ -1201,7 +1196,6 @@ def mergecsv(args):
     if op.exists(outfile):
         os.remove(outfile)
 
-    tsvfile = tsvfiles[0]
     fw = must_open(opts.outfile, "w")
     for i, tsvfile in enumerate(tsvfiles):
         fp = open(tsvfile)

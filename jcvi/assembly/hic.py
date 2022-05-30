@@ -4,8 +4,6 @@
 """
 Process Hi-C output into AGP for chromosomal-scale scaffolding.
 """
-from __future__ import print_function
-
 import array
 import json
 import logging
@@ -636,7 +634,6 @@ def dist(args):
     a = np.load(npyfile)
 
     xmin, xmax = opts.xmin, opts.xmax
-    (size,) = min(distbin_sizes.shape, distbin_starts.shape, a.shape)
     df = pd.DataFrame()
     xstart, xend = (
         np.searchsorted(distbin_starts, xmin),
@@ -655,7 +652,7 @@ def dist(args):
     if opts.title:
         ax.set_title(markup(opts.title))
     ax.set_xlabel("Link size (bp)")
-    ax.set_ylabel("Density (\# of links per bp)")
+    ax.set_ylabel(r"Density (\# of links per bp)")
     ax.set_xscale("log", nonposx="clip")
     ax.set_yscale("log", nonposy="clip")
     ax.xaxis.set_major_formatter(human_base_formatter)

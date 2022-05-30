@@ -4,8 +4,6 @@
 """
 Run through NCBI vecscreen on a local machine.
 """
-from __future__ import print_function
-
 import os.path as op
 import sys
 
@@ -93,7 +91,10 @@ def blast(args):
     """
     p = OptionParser(blast.__doc__)
     p.add_option(
-        "--dist", default=100, type="int", help="Merge adjacent HSPs separated by",
+        "--dist",
+        default=100,
+        type="int",
+        help="Merge adjacent HSPs separated by",
     )
     p.add_option("--db", help="Use a different database rather than UniVec_Core")
     opts, args = p.parse_args(args)

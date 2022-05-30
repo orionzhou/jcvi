@@ -9,13 +9,10 @@
 #
 import csv
 import sys
-import os.path as op
 
 from jcvi.apps.base import OptionParser
 from jcvi.graphics.base import (
-    FancyBboxPatch,
     Rectangle,
-    linear_shade,
     markup,
     normalize_axes,
     plt,
@@ -26,6 +23,7 @@ from jcvi.graphics.base import (
 
 class CsvTable(list):
     def __init__(self, csvfile="table.csv"):
+        super(CsvTable, self).__init__()
         with open(csvfile) as csvfile:
             reader = csv.reader(csvfile, skipinitialspace=True)
             self.header = [markup(x) for x in next(reader)]
@@ -67,13 +65,14 @@ class CsvTable(list):
 
 
 def draw_multiple_images_in_rectangle(ax, images, rect, box_width, yinflation=1):
-    """ Draw multiple images in given rectangle. Used by draw_table().
+    """Draw multiple images in given rectangle. Used by draw_table().
 
     Args:
         ax (matplotlib axes): matplotlib axes
         images (List[image]): List of images
         rect (Tuple[float]): (left, bottom, width, height)
         box_width (float): Width of the image square
+        yinflation (float): inflation along the y-axis
     """
     n_images = len(images)
     left, bottom, width, height = rect
@@ -87,7 +86,7 @@ def draw_multiple_images_in_rectangle(ax, images, rect, box_width, yinflation=1)
 
 
 def draw_table(ax, csv_table, extent=(0, 1, 0, 1), stripe_color="beige", yinflation=1):
-    """ Draw table on canvas.
+    """Draw table on canvas.
 
     Args:
         ax (matplotlib axes): matplotlib axes
@@ -102,11 +101,9 @@ def draw_table(ax, csv_table, extent=(0, 1, 0, 1), stripe_color="beige", yinflat
     width = right - left
     height = top - bottom
     rows = csv_table.rows
-    columns = csv_table.columns
     column_widths = csv_table.column_widths(width)
     print(column_widths)
 
-    xinterval = width / columns
     yinterval = height / rows
     for i, row in enumerate(csv_table):
         should_stripe = i % 2 == 0
@@ -129,7 +126,11 @@ def draw_table(ax, csv_table, extent=(0, 1, 0, 1), stripe_color="beige", yinflat
                 should_stripe = False
             else:
                 ax.text(
-                    xmid, ymid, cell, ha="center", va="center",
+                    xmid,
+                    ymid,
+                    cell,
+                    ha="center",
+                    va="center",
                 )
 
             xstart += column_widths[j]

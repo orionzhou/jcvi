@@ -4,8 +4,6 @@
 """
 Deals with K-mers and K-mer distribution from reads or genome
 """
-from __future__ import print_function
-
 import os.path as op
 import sys
 import logging
@@ -39,6 +37,7 @@ KMERYL, KSOAP, KALLPATHS = range(3)
 
 class KmerSpectrum(BaseFile):
     def __init__(self, histfile):
+        super(KmerSpectrum, self).__init__(histfile)
         self.load_data(histfile)
 
     def load_data(self, histfile):
@@ -80,10 +79,11 @@ class KmerSpectrum(BaseFile):
         return zip(*self.counts)
 
     def analyze(self, K=23, maxiter=100, method="nbinom"):
-        """ Analyze K-mer histogram.
+        """Analyze K-mer histogram.
 
         Args:
             K (int, optional): K-mer size. Defaults to 23.
+            maxiter (int): Iterations to run. Defaults to 100.
             method (str, optional): Method to use, either 'nbinom' or
             'allpaths'. Defaults to "nbinom".
 
@@ -99,7 +99,7 @@ class KmerSpectrum(BaseFile):
         return self.analyze_allpaths(K=K)
 
     def analyze_nbinom(self, K=23, maxiter=100):
-        """ Analyze the K-mer histogram using negative binomial distribution.
+        """Analyze the K-mer histogram using negative binomial distribution.
 
         Args:
             K (int, optional): K-mer size used when generating the histogram. Defaults to 23.
@@ -115,7 +115,7 @@ class KmerSpectrum(BaseFile):
         # Generate bins for the decomposed negative binomial distributions
         bins = [
             (i, i) for i in range(1, 9)
-        ]  # The first 8 CN are critical often determins ploidy
+        ]  # The first 8 CN are critical often determines ploidy
         for i in (8, 16, 32, 64, 128, 256, 512):  # 14 geometricly sized bins
             a, b = i + 1, int(round(i * 2 ** 0.5))
             bins.append((a, b))
@@ -125,26 +125,32 @@ class KmerSpectrum(BaseFile):
         # Convert histogram to np array so we can index by CN
         kf_ceil = max([cov for cov, _ in self.data])
         N = kf_ceil + 1
-        hist = np.zeros(N, dtype=np.int)
+        hist = np.zeros(N, dtype=int)
         for cov, count in self.data:
             hist[cov] = count
 
         # min1: find first minimum
-        _kf_min1 = 10
-        while _kf_min1 - 1 >= 2 and hist[_kf_min1 - 1] < hist[_kf_min1]:
+        _kf_min1 = 5
+        while (
+            _kf_min1 - 1 >= 2
+            and hist[_kf_min1 - 1] * (_kf_min1 - 1) < hist[_kf_min1] * _kf_min1
+        ):
             _kf_min1 -= 1
-        while _kf_min1 <= kf_ceil and hist[_kf_min1 + 1] < hist[_kf_min1]:
+        while (
+            _kf_min1 <= kf_ceil
+            and hist[_kf_min1 + 1] * (_kf_min1 + 1) < hist[_kf_min1] * _kf_min1
+        ):
             _kf_min1 += 1
 
         # max2: find absolute maximum mx2 above first minimum min1
         _kf_max2 = _kf_min1
         for kf in range(_kf_min1 + 1, int(0.8 * kf_ceil)):
-            if hist[kf] > hist[_kf_max2]:
+            if hist[kf] * kf > hist[_kf_max2] * _kf_max2:
                 _kf_max2 = kf
 
         # Discard the last entry as that is usually an inflated number
         hist = hist[:-1]
-        kf_range = np.arange(_kf_min1, len(hist), dtype=np.int)
+        kf_range = np.arange(_kf_min1, len(hist), dtype=int)
         P = hist[kf_range] * kf_range  # Target distribution
         print("==> Start nbinom method on range ({}, {})".format(_kf_min1, len(hist)))
 
@@ -964,11 +970,17 @@ def jellyfish(args):
     p = OptionParser(jellyfish.__doc__)
     p.add_option("-K", default=23, type="int", help="K-mer size")
     p.add_option(
-        "--coverage", default=40, type="int", help="Expected sequence coverage",
+        "--coverage",
+        default=40,
+        type="int",
+        help="Expected sequence coverage",
     )
     p.add_option("--prefix", default="jf", help="Database prefix")
     p.add_option(
-        "--nohist", default=False, action="store_true", help="Do not print histogram",
+        "--nohist",
+        default=False,
+        action="store_true",
+        help="Do not print histogram",
     )
     p.set_home("jellyfish")
     p.set_cpus()
@@ -1113,10 +1125,18 @@ def histogram(args):
     """
     p = OptionParser(histogram.__doc__)
     p.add_option(
-        "--vmin", dest="vmin", default=1, type="int", help="minimum value, inclusive",
+        "--vmin",
+        dest="vmin",
+        default=1,
+        type="int",
+        help="minimum value, inclusive",
     )
     p.add_option(
-        "--vmax", dest="vmax", default=100, type="int", help="maximum value, inclusive",
+        "--vmax",
+        dest="vmax",
+        default=100,
+        type="int",
+        help="maximum value, inclusive",
     )
     p.add_option(
         "--pdf",
@@ -1196,7 +1216,11 @@ def histogram(args):
         kf_range = method_info["kf_range"]
         stacked = generative_model(GG, ll, rr)
         plt.plot(
-            kf_range, stacked, ":", color="#6a3d9a", lw=2,
+            kf_range,
+            stacked,
+            ":",
+            color="#6a3d9a",
+            lw=2,
         )
 
     ax = plt.gca()

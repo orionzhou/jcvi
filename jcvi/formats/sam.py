@@ -7,8 +7,6 @@ This script simply parses the lines in SAM into human readable fields.
 
 http://samtools.sourceforge.net/SAM1.pdf
 """
-from __future__ import print_function
-
 import os
 import os.path as op
 import sys
@@ -93,7 +91,7 @@ class SamLine(object):
 
 class Sam(LineFile):
     def __init__(self, filename, callback=None):
-
+        super(Sam, self).__init__(filename)
         fp = open(filename)
         for row in fp:
             if row[0] == "@":

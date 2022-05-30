@@ -171,7 +171,7 @@ class ScaffoldOO(object):
         print_tour(fwtour, self.object, tag, "INIT", tour, recode=True)
         signs = self.assign_orientation()
         assert len(signs) == len(scaffolds)
-        tour = zip(scaffolds, signs)
+        tour = list(zip(scaffolds, signs))
         scaffolds_oo = dict(tour)
         print_tour(fwtour, self.object, tag, "FLIP", tour, recode=True)
         tour = self.assign_order()
@@ -526,6 +526,7 @@ class Map(list):
         remove_outliers=False,
         function=(lambda x: x.rank),
     ):
+        super(Map, self).__init__()
         bed = Bed(filename)
         for b in bed:
             self.append(Marker(b))
@@ -1099,7 +1100,7 @@ def movie(args):
     sizes = Sizes(scaffoldsfasta).mapping
     ffmpeg = "ffmpeg"
     mkdir(ffmpeg)
-    score = cur_score = None
+    score = None
     i = 1
     for header, block in read_block(fp, ">"):
         s, tag, label = header[1:].split()
@@ -1117,7 +1118,7 @@ def movie(args):
         image_name = ".".join((seqid, "{0:04d}".format(i), label, "pdf"))
         if need_update(tourfile, image_name):
             fwagp = must_open(agpfile, "w")
-            order_to_agp(seqid, tour, sizes, fwagp, gapsize=gapsize, gaptype="map")
+            order_to_agp(seqid, tour, sizes, fwagp, gapsize=gapsize, evidence="map")
             fwagp.close()
             logging.debug("%s written to `%s`.", header, agpfile)
             build([inputbed, scaffoldsfasta, "--cleanup"])
@@ -1621,7 +1622,7 @@ def path(args):
     AGP.print_header(fwagp, comment=comment)
 
     for s in natsorted(solutions, key=lambda x: x.object):
-        order_to_agp(s.object, s.tour, sizes, fwagp, gapsize=gapsize, gaptype="map")
+        order_to_agp(s.object, s.tour, sizes, fwagp, gapsize=gapsize, evidence="map")
     fwagp.close()
 
     logging.debug("AGP file written to `%s`.", agpfile)
@@ -1636,6 +1637,8 @@ def path(args):
         plotall(
             [
                 inputbed,
+                "-w",
+                opts.weightsfile,
                 "--links={0}".format(opts.links),
                 "--figsize={0}".format(opts.figsize),
             ]
@@ -1982,6 +1985,7 @@ def plot(args):
         while height / len(ax.get_yticks()) < 0.03 and len(ax.get_yticks()) >= 2:
             ax.set_yticks(ax.get_yticks()[::2])  # Sparsify the ticks
         yticklabels = [int(x) for x in ax.get_yticks()]
+        ax.set_yticks(yticklabels)
         ax.set_yticklabels(yticklabels, family="Helvetica")
         if rho < 0:
             ax.invert_yaxis()

@@ -2,10 +2,8 @@
 # -*- coding: UTF-8 -*-
 
 """
-Analyze SNPs in resequencing panels.
+Analyze SNPs in re-sequencing panels.
 """
-from __future__ import print_function
-
 import sys
 import logging
 
@@ -195,7 +193,7 @@ def somatic(args):
         pf = b.split(".")[0]
         cmd = tcmd
         cmd += " -o {0}".format(pf)
-        others = ",".join(sorted(set(bams) - set([b])))
+        others = ",".join(sorted(set(bams) - {b}))
         cmd += " {0} {1} {2}".format(ref, others, b)
         cmds.append(cmd)
 

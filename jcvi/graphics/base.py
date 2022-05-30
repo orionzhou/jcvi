@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-from __future__ import print_function
 import copy
 import os.path as op
 import sys
@@ -105,7 +104,7 @@ class AbstractLayout(LineFile):
     represents a subplot, a track or a panel.
     """
 
-    def __init__(self, filename, delimiter=","):
+    def __init__(self, filename):
         super(AbstractLayout, self).__init__(filename)
 
     def assign_array(self, attrib, array):
@@ -161,7 +160,7 @@ def linear_blend(from_color, to_color, fraction=0.5):
 
     r1, g1, b1 = to_rgb(from_color)
     r2, g2, b2 = to_rgb(to_color)
-    return (lerp(r1, r2, fraction), lerp(g1, g2, fraction), lerp(b1, b2, fraction))
+    return lerp(r1, r2, fraction), lerp(g1, g2, fraction), lerp(b1, b2, fraction)
 
 
 def linear_shade(from_color, fraction=0.5):
@@ -285,7 +284,7 @@ def savefig(figname, dpi=150, iopts=None, cleanup=True):
     except Exception as e:
         message = "savefig failed. Reset usetex to False."
         message += "\n{0}".format(str(e))
-        logging.error(message)
+        logging.info(message)
         rc("text", usetex=False)
         plt.savefig(figname, dpi=dpi)
 
@@ -398,11 +397,12 @@ def setup_theme(
         pass
 
     if usetex:
-        rc("text", usetex=usetex)
+        rc("text", usetex=True)
     else:
-        logging.error(
+        logging.info(
             "Set text.usetex={}. Font styles may be inconsistent.".format(usetex)
         )
+        rc("text", usetex=False)
 
     if font == "Helvetica":
         rc("font", **{"family": "sans-serif", "sans-serif": ["Helvetica"]})

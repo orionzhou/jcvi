@@ -5,13 +5,10 @@
 Legacy script to plot distribution of certain classes onto chromosomes. Adapted
 from the script used in the Tang et al. PNAS 2010 paper, sigma figure.
 """
-from __future__ import print_function
-
 import logging
 import sys
 from itertools import groupby
 from math import ceil
-from optparse import OptionGroup
 
 import numpy as np
 
@@ -45,7 +42,6 @@ class Chromosome(BaseGlyph):
         patch=None,
         patchcolor="lightgrey",
         lw=1,
-        fc="k",
         zorder=2,
     ):
         """
@@ -246,6 +242,7 @@ class GeneticMap(BaseGlyph):
     def __init__(
         self, ax, x, y1, y2, markers, unit="cM", tip=0.008, fc="k", flip=False
     ):
+        super(GeneticMap, self).__init__(ax)
         # tip = length of the ticks
         y1, y2 = sorted((y1, y2))
         ax.plot([x, x], [y1, y2], "-", color=fc, lw=2)
@@ -283,8 +280,19 @@ class Gauge(BaseGlyph):
         extra=0.006,
         fc="lightslategray",
     ):
-        # tip = length of the ticks
-        # extra = offset for the unit label
+        """
+        Args:
+            ax (matplotlib.Axes): axes
+            x (float): x position
+            y1 (float): y start position
+            y2 (float): y end position
+            max_chr_len (int): maximum chromosome size
+            step (int): step to show the ticks
+            tip (float): length of the ticks
+            extra (float): offset for the unit label
+            fc (str): face color of the glyph
+        """
+        super(Gauge, self).__init__(ax)
         ax.plot([x, x], [y1, y2], "-", color=fc, lw=2)
         r = y2 - y1
         yy = y2
@@ -431,7 +439,8 @@ def main():
     )
     g = OptionGroup(p, "Display accessories")
     g.add_option(
-        "--title", help="title of the image",
+        "--title",
+        help="title of the image",
     )
     g.add_option(
         "--gauge",
@@ -608,7 +617,6 @@ def draw_chromosomes(
         bac_list = []
         prev_end, prev_klass = 0, None
         for b in bed.sub_bed(chr):
-            clen = chr_lens[chr]
             idx = chr_idxs[chr]
             klass = b.accn
             if klass == "centromere":

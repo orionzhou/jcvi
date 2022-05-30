@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-from __future__ import print_function
 import os.path as op
 import sys
 import logging
@@ -19,7 +18,6 @@ from jcvi.utils.cbook import gene_name
 from jcvi.compara.synteny import AnchorFile, check_beds
 from jcvi.apps.base import (
     OptionParser,
-    OptionGroup,
     glob,
     ActionDispatcher,
     need_update,
@@ -475,7 +473,7 @@ def omg(args):
         fw.close()
 
 
-def geneinfo(bed, order, genomeidx, ploidy):
+def geneinfo(bed, genomeidx, ploidy):
     bedfile = bed.filename
     p = bedfile.split(".")[0]
     idx = genomeidx[p]
@@ -540,8 +538,8 @@ def omgprepare(args):
 
     ploidy = DictFile(ploidy)
 
-    geneinfo(qbed, qorder, genomeidx, ploidy)
-    geneinfo(sbed, sorder, genomeidx, ploidy)
+    geneinfo(qbed, genomeidx, ploidy)
+    geneinfo(sbed, genomeidx, ploidy)
 
     pf = blastfile.rsplit(".", 1)[0]
     cscorefile = pf + ".cscore"
@@ -655,7 +653,13 @@ def ortholog(args):
         help="Distance to extend from liftover. Defaults to half of --dist",
     )
     p.set_cpus()
-    p.set_dotplot_opts()
+    dotplot_group = p.set_dotplot_opts()
+    dotplot_group.add_option(
+        "--notex", default=False, action="store_true", help="Do not use tex"
+    )
+    dotplot_group.add_option(
+        "--no_dotplot", default=False, action="store_true", help="Do not make dotplot"
+    )
 
     opts, args = p.parse_args(args)
 
@@ -674,8 +678,8 @@ def ortholog(args):
     minsize_flag = "--min_size={}".format(opts.n)
     cpus_flag = "--cpus={}".format(opts.cpus)
 
-    aprefix = afasta.split(".")[0]
-    bprefix = bfasta.split(".")[0]
+    aprefix = op.basename(a)
+    bprefix = op.basename(b)
     pprefix = ".".join((aprefix, bprefix))
     qprefix = ".".join((bprefix, aprefix))
     last = pprefix + ".last"
@@ -717,7 +721,7 @@ def ortholog(args):
             scan(dargs)
         if quota:
             quota_main([lifted_anchors, "--quota={0}".format(quota), "--screen"])
-        if need_update(anchors, pdf):
+        if need_update(anchors, pdf) and not opts.no_dotplot:
             from jcvi.graphics.dotplot import dotplot_main
 
             dargs = [anchors]
@@ -731,6 +735,8 @@ def ortholog(args):
                 dargs += ["--genomenames", opts.genomenames]
             if opts.theme:
                 dargs += ["--theme", opts.theme]
+            if opts.notex:
+                dargs += ["--notex"]
             dotplot_main(dargs)
         return
 

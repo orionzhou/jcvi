@@ -4,8 +4,6 @@
 """
 Catalog gene losses, and bites within genes.
 """
-from __future__ import print_function
-
 import sys
 import logging
 
@@ -159,7 +157,10 @@ def segment(args):
 
     p = OptionParser(segment.__doc__)
     p.add_option(
-        "--chain", default=1, type="int", help="Allow next N genes to be chained",
+        "--chain",
+        default=1,
+        type="int",
+        help="Allow next N genes to be chained",
     )
     opts, args = p.parse_args(args)
 
@@ -679,7 +680,10 @@ def loss(args):
     )
     p.add_option("--gdist", default=20, type="int", help="Gene distance")
     p.add_option(
-        "--bdist", default=20000, type="int", help="Base pair distance",
+        "--bdist",
+        default=20000,
+        type="int",
+        help="Base pair distance",
     )
     p.set_beds()
     opts, args = p.parse_args(args)
