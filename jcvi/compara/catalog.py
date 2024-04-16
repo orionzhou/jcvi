@@ -15,7 +15,6 @@ from jcvi.formats.bed import Bed
 from jcvi.formats.base import must_open, BaseFile
 from jcvi.utils.grouper import Grouper
 from jcvi.utils.cbook import gene_name
-from jcvi.compara.synteny import AnchorFile, check_beds
 from jcvi.apps.base import (
     OptionParser,
     glob,
@@ -24,6 +23,8 @@ from jcvi.apps.base import (
     sh,
     mkdir,
 )
+from .base import AnchorFile
+from .synteny import check_beds
 
 
 class OMGFile(BaseFile):
@@ -63,7 +64,6 @@ class OMGFile(BaseFile):
 
 
 def main():
-
     actions = (
         ("tandem", "identify tandem gene groups within certain distance"),
         ("ortholog", "run a combined synteny and RBH pipeline to call orthologs"),
@@ -609,10 +609,11 @@ def ortholog(args):
     match (RBH).
     """
     from jcvi.apps.align import last as last_main
+    from jcvi.apps.align import diamond_blastp_main, blast_main
     from jcvi.compara.blastfilter import main as blastfilter_main
     from jcvi.compara.quota import main as quota_main
     from jcvi.compara.synteny import scan, mcscan, liftover
-    from jcvi.formats.blast import cscore, filter
+    from jcvi.formats.blast import cscore, filter, filtered_blastfile_name
 
     p = OptionParser(ortholog.__doc__)
     p.add_option(
@@ -621,6 +622,7 @@ def ortholog(args):
         choices=("nucl", "prot"),
         help="Molecule type of subject database",
     )
+
     p.add_option(
         "--full",
         default=False,
@@ -642,6 +644,12 @@ def ortholog(args):
     p.add_option("--quota", help="Quota align parameter")
     p.add_option("--exclude", help="Remove anchors from a previous run")
     p.add_option(
+        "--self_remove",
+        default=98,
+        type="float",
+        help="Remove self hits that are above this percent identity",
+    )
+    p.add_option(
         "--no_strip_names",
         default=False,
         action="store_true",
@@ -660,6 +668,19 @@ def ortholog(args):
     dotplot_group.add_option(
         "--no_dotplot", default=False, action="store_true", help="Do not make dotplot"
     )
+    p.add_option(
+        "--ignore_zero_anchor",
+        default=False,
+        action="store_true",
+        help="Ignore this pair of ortholog identification instead of throwing an error when performing many pairs of cataloging."
+    )
+
+    p.add_option(
+        "--align_soft",
+        default="last",
+        choices=("last", "blast", "diamond_blastp"),
+        help="Sequence alignment software. Default <last> for both <nucl> and <prot>. Users could also use <blast> for both <nucl> and <prot>, or <diamond_blastp> for <prot>.",
+    )
 
     opts, args = p.parse_args(args)
 
@@ -668,6 +689,7 @@ def ortholog(args):
 
     a, b = args
     dbtype = opts.dbtype
+    ignore_zero_anchor = opts.ignore_zero_anchor
     suffix = ".cds" if dbtype == "nucl" else ".pep"
     abed, afasta = a + ".bed", a + suffix
     bbed, bfasta = b + ".bed", b + suffix
@@ -677,6 +699,7 @@ def ortholog(args):
     dist = "--dist={0}".format(opts.dist)
     minsize_flag = "--min_size={}".format(opts.n)
     cpus_flag = "--cpus={}".format(opts.cpus)
+    align_soft = opts.align_soft
 
     aprefix = op.basename(a)
     bprefix = op.basename(b)
@@ -684,12 +707,24 @@ def ortholog(args):
     qprefix = ".".join((bprefix, aprefix))
     last = pprefix + ".last"
     if need_update((afasta, bfasta), last, warn=True):
-        last_main([bfasta, afasta, cpus_flag], dbtype)
+        if align_soft == "blast":
+            blast_main(
+                [bfasta, afasta, cpus_flag], dbtype
+            )
+        elif dbtype == "prot" and align_soft == "diamond_blastp":
+            diamond_blastp_main(
+                [bfasta, afasta, cpus_flag], dbtype
+            )
+        else:
+            last_main([bfasta, afasta, cpus_flag], dbtype)
 
+    self_remove = opts.self_remove
     if a == b:
-        lastself = last + ".P98L0.inverse"
+        lastself = filtered_blastfile_name(last, self_remove, 0, inverse=True)
         if need_update(last, lastself, warn=True):
-            filter([last, "--hitlen=0", "--pctid=98", "--inverse", "--noself"])
+            filter(
+                [last, "--hitlen=0", f"--pctid={self_remove}", "--inverse", "--noself"]
+            )
         last = lastself
 
     filtered_last = last + ".filtered"
@@ -718,7 +753,15 @@ def ortholog(args):
                 dargs += ["--no_strip_names"]
             if opts.liftover_dist:
                 dargs += ["--liftover_dist={}".format(opts.liftover_dist)]
-            scan(dargs)
+            try:
+                scan(dargs)
+            except ValueError as e:
+                if ignore_zero_anchor:
+                    logging.debug(f"{e}")
+                    logging.debug("Ignoring this error and continuing...")
+                    return
+                else:
+                    raise ValueError(e)
         if quota:
             quota_main([lifted_anchors, "--quota={0}".format(quota), "--screen"])
         if need_update(anchors, pdf, warn=True) and not opts.no_dotplot:
@@ -786,7 +829,6 @@ def tandem_main(
     ofile=sys.stderr,
     genefam=False,
 ):
-
     if genefam:
         N = 1e5
 

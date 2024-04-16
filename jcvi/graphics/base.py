@@ -3,12 +3,14 @@
 
 import copy
 import os.path as op
+from os import remove
 import sys
 import logging
 
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
 logging.getLogger("numexpr").setLevel(logging.WARNING)
 logging.getLogger("PIL").setLevel(logging.INFO)
+
 
 from functools import partial
 
@@ -32,13 +34,10 @@ from matplotlib.patches import (
     FancyArrowPatch,
     FancyBboxPatch,
 )
-from matplotlib.path import Path
 from typing import Optional
 
-from jcvi.formats.base import LineFile
-from jcvi.apps.base import glob, listify, datadir, sample_N, which
-
-logging.getLogger().setLevel(logging.DEBUG)
+from ..apps.base import datadir, glob, listify, logger, sample_N, which
+from ..formats.base import LineFile
 
 
 CHARS = {
@@ -64,7 +63,7 @@ GRAPHIC_FORMATS = (
 )
 
 
-def is_usetex():
+def is_tex_available() -> bool:
     """Check if latex command is available"""
     return bool(which("latex")) and bool(which("lp"))
 
@@ -74,8 +73,9 @@ class ImageOptions(object):
         self.w, self.h = [int(x) for x in opts.figsize.split("x")]
         self.dpi = opts.dpi
         self.format = opts.format
-        self.cmap = cm.get_cmap(opts.cmap)
+        self.cmap = mpl.colormaps[opts.cmap]
         self.seed = opts.seed
+        self.usetex = is_tex_available() and not opts.notex
         self.opts = opts
 
     def __str__(self):
@@ -88,28 +88,26 @@ class ImageOptions(object):
 
 
 class TextHandler(object):
-    def __init__(self, fig):
+    def __init__(self, fig, usetex: bool = True):
         self.heights = []
         try:
-            self.build_height_array(fig)
+            self.build_height_array(fig, usetex=usetex)
         except ValueError as e:
-            logging.debug(
-                "Failed to init heights (error: {}). Variable label sizes skipped.".format(
-                    e
-                )
+            logger.debug(
+                "Failed to init heights (error: %s). Variable label sizes skipped.", e
             )
 
     @classmethod
-    def get_text_width_height(cls, fig, txt="chr01", size=12, usetex=is_usetex()):
+    def get_text_width_height(cls, fig, txt="chr01", size=12, usetex: bool = True):
         tp = mpl.textpath.TextPath((0, 0), txt, size=size, usetex=usetex)
         bb = tp.get_extents()
         xmin, ymin = fig.transFigure.inverted().transform((bb.xmin, bb.ymin))
         xmax, ymax = fig.transFigure.inverted().transform((bb.xmax, bb.ymax))
         return xmax - xmin, ymax - ymin
 
-    def build_height_array(self, fig, start=1, stop=36):
+    def build_height_array(self, fig, start=1, stop=36, usetex: bool = True):
         for i in range(start, stop + 1):
-            w, h = TextHandler.get_text_width_height(fig, size=i)
+            w, h = TextHandler.get_text_width_height(fig, size=i, usetex=usetex)
             self.heights.append((h, i))
 
     def select_fontsize(self, height, minsize=1, maxsize=12):
@@ -202,8 +200,8 @@ def load_image(filename):
         ret[:, :, 2] = ret[:, :, 1] = ret[:, :, 0] = img
         img = ret
     else:
-        h, w, c = img.shape
-    logging.debug("Image `{0}` loaded ({1}px x {2}px).".format(filename, w, h))
+        h, w, _ = img.shape
+    logger.debug("Image `%s` loaded (%dpx x %dpx).", filename, w, h)
     return img
 
 
@@ -313,18 +311,21 @@ def savefig(figname, dpi=150, iopts=None, cleanup=True):
     except:
         format = "pdf"
     try:
+        logger.debug("Matplotlib backend is: %s", mpl.get_backend())
         plt.savefig(figname, dpi=dpi, format=format)
     except Exception as e:
-        message = "savefig failed. Reset usetex to False."
-        message += "\n{0}".format(str(e))
-        logging.info(message)
-        rc("text", usetex=False)
-        plt.savefig(figname, dpi=dpi)
+        logger.error("savefig failed with message:\n%s", e)
+        logger.info("Try running again with --notex option to disable latex.")
+        if op.exists(figname):
+            if op.getsize(figname) < 1000:
+                logger.debug("Cleaning up empty file: %s", figname)
+                remove(figname)
+        sys.exit(1)
 
-    msg = "Figure saved to `{0}`".format(figname)
+    msg = f"Figure saved to `{figname}`"
     if iopts:
-        msg += " {0}".format(iopts)
-    logging.debug(msg)
+        msg += f" {iopts}"
+    logger.debug(msg)
 
     if cleanup:
         plt.rcdefaults()
@@ -377,7 +378,6 @@ available_fonts = [op.basename(x) for x in glob(datadir + "/*.ttf")]
 
 
 def fontprop(ax, name, size=12):
-
     assert name in available_fonts, "Font must be one of {0}.".format(available_fonts)
 
     import matplotlib.font_manager as fm
@@ -385,7 +385,7 @@ def fontprop(ax, name, size=12):
     fname = op.join(datadir, name)
     prop = fm.FontProperties(fname=fname, size=size)
 
-    logging.debug("Set font to `{0}` (`{1}`).".format(name, prop.get_file()))
+    logger.debug("Set font to `%s` (`%s`)", name, prop.get_file())
     for text in ax.texts:
         text.set_fontproperties(prop)
 
@@ -415,7 +415,7 @@ def setup_theme(
     style="darkgrid",
     palette="deep",
     font="Helvetica",
-    usetex=is_usetex(),
+    usetex: bool = True,
 ):
     try:
         import seaborn as sns
@@ -432,9 +432,7 @@ def setup_theme(
     if usetex:
         rc("text", usetex=True)
     else:
-        logging.info(
-            "Set text.usetex={}. Font styles may be inconsistent.".format(usetex)
-        )
+        logger.info("Set text.usetex=%s. Font styles may be inconsistent.", usetex)
         rc("text", usetex=False)
 
     if font == "Helvetica":
@@ -443,9 +441,6 @@ def setup_theme(
         rc("font", **{"family": "serif", "serif": ["Palatino"]})
     elif font == "Schoolbook":
         rc("font", **{"family": "serif", "serif": ["Century Schoolbook L"]})
-
-
-setup_theme()
 
 
 def asciiaxis(x, digit=1):

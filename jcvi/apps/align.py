@@ -10,14 +10,17 @@ import sys
 import shutil
 import logging
 
+from subprocess import CalledProcessError, STDOUT
+
 from jcvi.utils.cbook import depends
 from jcvi.apps.base import (
-    OptionParser,
     ActionDispatcher,
-    sh,
+    OptionParser,
+    cleanup,
     get_abs_path,
-    which,
     mkdir,
+    sh,
+    which,
 )
 
 
@@ -25,6 +28,13 @@ from jcvi.apps.base import (
 def run_formatdb(infile=None, outfile=None, dbtype="nucl"):
     cmd = "makeblastdb"
     cmd += " -dbtype {0} -in {1}".format(dbtype, infile)
+    sh(cmd)
+
+
+@depends
+def run_diamond_makedb(infile=None, outfile=None):
+    cmd = "diamond makedb"
+    cmd += " --in {0} --db {1} -p 5".format(infile, infile)
     sh(cmd)
 
 
@@ -38,7 +48,6 @@ def run_blat(
     cpus=16,
     overwrite=True,
 ):
-
     cmd = "pblat -threads={0}".format(cpus) if which("pblat") else "blat"
     cmd += " {0} {1} -out=blast8 {2}".format(db, infile, outfile)
     sh(cmd)
@@ -83,7 +92,6 @@ def run_megablast(
     task="megablast",
     cpus=16,
 ):
-
     assert db, "Need to specify database fasta file."
 
     db = get_abs_path(db)
@@ -123,7 +131,6 @@ def run_blast_filter(infile=None, outfile=None, pctid=95, hitlen=50):
 
 
 def main():
-
     actions = (
         ("blast", "run blastn using query against reference"),
         ("blat", "run blat using query against reference"),
@@ -221,7 +228,7 @@ def nucmer(args):
 
     ref, query = args
     cpus = opts.cpus
-    nrefs = nqueries = opts.chunks or int(cpus ** 0.5)
+    nrefs = nqueries = opts.chunks or int(cpus**0.5)
     refdir = ref.split(".")[0] + "-outdir"
     querydir = query.split(".")[0] + "-outdir"
     reflist = split([ref, refdir, str(nrefs)]).names
@@ -524,6 +531,10 @@ def last(args, dbtype=None):
     getpath = lambda x: op.join(path, x) if path else x
     lastdb_bin = getpath("lastdb")
     lastal_bin = getpath("lastal")
+    for bin in (lastdb_bin, lastal_bin):
+        if not which(bin):
+            logging.fatal("`%s` not found on PATH. Have you installed LAST?", bin)
+            sys.exit(1)
 
     subjectdb = subject.rsplit(".", 1)[0]
     run_lastdb(
@@ -535,10 +546,8 @@ def last(args, dbtype=None):
     )
 
     u = 2 if opts.mask else 0
-    cmd = "{0} -u {1}".format(lastal_bin, u)
-    cmd += " -P {0} -i3G".format(cpus)
+    cmd = "{0} -u {1} -i3G".format(lastal_bin, u)
     cmd += " -f {0}".format(opts.format)
-    cmd += " {0} {1}".format(subjectdb, query)
 
     minlen = opts.minlen
     minid = opts.minid
@@ -554,8 +563,155 @@ def last(args, dbtype=None):
         cmd += " " + extra.strip()
 
     lastfile = get_outfile(subject, query, suffix="last", outdir=opts.outdir)
-    sh(cmd, outfile=lastfile)
+    # Make several attempts to run LASTAL
+    try:
+        sh(
+            cmd + f" -P {cpus} {subjectdb} {query}",
+            outfile=lastfile,
+            check=True,
+            redirect_error=STDOUT,
+        )
+    except CalledProcessError as e:  # multi-threading disabled
+        message = "lastal failed with message:"
+        message += "\n{0}".format(e.output.decode())
+        logging.error(message)
+        try:
+            logging.debug("Failed to run `lastal` with multi-threading. Trying again.")
+            sh(
+                cmd + f" -P 1 {subjectdb} {query}",
+                outfile=lastfile,
+                check=True,
+                redirect_error=STDOUT,
+            )
+        except CalledProcessError as e:
+            message = "lastal failed with message:"
+            message += "\n{0}".format(e.output.decode())
+            logging.error(message)
+            logging.fatal("Failed to run `lastal`. Aborted.")
+            cleanup(lastfile)
+            sys.exit(1)
     return lastfile
+
+
+def blast_main(args, dbtype=None):
+    """
+    %prog database.fasta query.fasta
+
+    Run blastp/blastn by calling BLAST+ blastp/blastn depends on dbtype.
+    """
+    p = OptionParser(blast_main.__doc__)
+    p.add_option(
+        "--dbtype",
+        default="nucl",
+        choices=("nucl", "prot"),
+        help="Molecule type of subject database",
+    )
+    p.add_option("--path", help="Specify BLAST path for blastn or blastp")
+
+    p.set_cpus()
+    p.set_outdir()
+    p.set_params()
+
+    opts, args = p.parse_args(args)
+
+    if len(args) != 2:
+        sys.exit(not p.print_help())
+
+    subject, query = args
+    path = opts.path
+    cpus = opts.cpus
+    if not dbtype:
+        dbtype = opts.dbtype
+
+    getpath = lambda x: op.join(path, x) if path else x
+    cmd = "blastn" if dbtype == "nucl" else "blastp"
+    lastdb_bin = getpath("makeblastdb")
+    lastal_bin = getpath(cmd)
+    for bin in (lastdb_bin, lastal_bin):
+        if not which(bin):
+            logging.fatal("`%s` not found on PATH. Have you installed BLAST?", bin)
+            sys.exit(1)
+
+    db_suffix = '.nin' if dbtype == "nucl" else ".pin"
+
+    run_formatdb(
+        infile=subject,
+        outfile=subject + db_suffix,
+        dbtype=dbtype)
+
+    blastfile = get_outfile(subject, query, suffix="last", outdir=opts.outdir)
+    # Make several attempts to run LASTAL
+    try:
+        sh(
+            cmd + f" -num_threads {cpus} -query {query} -db {subject} -out {blastfile}" +
+            " -outfmt 6 -max_target_seqs 1000 -evalue 1e-5",
+            check=False,
+            redirect_error=STDOUT,
+        )
+    except CalledProcessError as e:  # multi-threading disabled
+        message = f"{cmd} failed with message:"
+        message += "\n{0}".format(e.output.decode())
+        logging.error(message)
+        logging.fatal("Failed to run `blast`. Aborted.")
+        cleanup(blastfile)
+        sys.exit(1)
+    return blastfile
+
+
+def diamond_blastp_main(args, dbtype="prot"):
+    """
+    %prog database.fasta query.fasta
+
+    Run diamond blastp for protein alignment.
+    """
+    p = OptionParser(diamond_blastp_main.__doc__)
+
+    p.add_option("--path", help="Specify diamond path for diamond blastp")
+
+    p.set_cpus()
+    p.set_outdir()
+    p.set_params()
+
+    opts, args = p.parse_args(args)
+
+    if len(args) != 2:
+        sys.exit(not p.print_help())
+
+    subject, query = args
+    path = opts.path
+    cpus = opts.cpus
+    if not dbtype:
+        dbtype = opts.dbtype
+
+    getpath = lambda x: op.join(path, x) if path else x
+    cmd = "diamond blastp"
+    diamond_bin = getpath("diamond")
+    for bin in (diamond_bin,):
+        if not which(bin):
+            logging.fatal("`%s` not found on PATH. Have you installed Diamond?", bin)
+            sys.exit(1)
+
+    run_diamond_makedb(
+        infile=subject,
+        outfile=subject + '.dmnd',)
+
+    blastfile = get_outfile(subject, query, suffix="last", outdir=opts.outdir)
+    # Make several attempts to run LASTAL
+    try:
+        sh(
+            cmd + f" --threads {cpus} --query {query} --db {subject} --out {blastfile}" +
+            " --ultra-sensitive --max-target-seqs 1000 --evalue 1e-5 --outfmt 6",
+            check=False,
+            redirect_error=STDOUT,
+        )
+    except CalledProcessError as e:  # multi-threading disabled
+        message = f"{cmd} failed with message:"
+        message += "\n{0}".format(e.output.decode())
+        logging.error(message)
+        logging.fatal("Failed to run `diamond blastp`. Aborted.")
+        cleanup(blastfile)
+        sys.exit(1)
+    return blastfile
 
 
 if __name__ == "__main__":

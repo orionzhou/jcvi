@@ -18,6 +18,7 @@ from jcvi.utils.range import range_distance
 from jcvi.utils.cbook import percentage
 from jcvi.assembly.base import calculate_A50
 from jcvi.apps.base import OptionParser, ActionDispatcher, sh, popen
+from ..compara.base import AnchorFile
 
 
 try:
@@ -139,7 +140,6 @@ class BlastLineByConversion(BlastLine):
     """
 
     def __init__(self, sline, mode="1" * 12):
-
         if int(mode, 2) == 4095:
             super(BlastLineByConversion, self).__init__(sline)
         elif 3072 <= int(mode, 2) < 4095:
@@ -264,6 +264,22 @@ def get_stats(blastfile, strict=False):
     return alignstats
 
 
+def filtered_blastfile_name(
+    blastfile: str,
+    pctid: float,
+    hitlen: int,
+    inverse: bool = False,
+) -> str:
+    """
+    Return a filtered filename for LAST output, with the given similarity cutoff.
+    """
+    pctid_str = f"{pctid:.1f}".replace(".", "_").replace("_0", "")
+    newblastfile = blastfile + ".P{0}L{1}".format(pctid_str, hitlen)
+    if inverse:
+        newblastfile += ".inverse"
+    return newblastfile
+
+
 def filter(args):
     """
     %prog filter test.blast
@@ -310,7 +326,6 @@ def filter(args):
 
     (blastfile,) = args
     inverse = opts.inverse
-    outfile = opts.outfile
     fp = must_open(blastfile)
 
     score, pctid, hitlen, evalue, noself = (
@@ -320,13 +335,8 @@ def filter(args):
         opts.evalue,
         opts.noself,
     )
-    newblastfile = (
-        blastfile + ".P{0}L{1}".format(int(pctid), hitlen)
-        if outfile is None
-        else outfile
-    )
-    if inverse:
-        newblastfile += ".inverse"
+    blastfile = opts.outfile or blastfile
+    newblastfile = filtered_blastfile_name(blastfile, pctid, hitlen, inverse)
     fw = must_open(newblastfile, "w")
     for row in fp:
         if row[0] == "#":
@@ -363,7 +373,6 @@ def filter(args):
 
 
 def main():
-
     actions = (
         ("summary", "provide summary on id% and cov%"),
         ("completeness", "print completeness statistics for each query"),
@@ -373,6 +382,7 @@ def main():
         ("covfilter", "filter BLAST file (based on id% and cov%)"),
         ("cscore", "calculate C-score for BLAST pairs"),
         ("best", "get best BLAST hit per query"),
+        ("anchors", "keep only the BLAST pairs that are in the anchors file"),
         ("pairs", "print paired-end reads of BLAST tabular file"),
         ("bed", "get bed file from BLAST tabular file"),
         ("condense", "group HSPs together for same query-subject pair"),
@@ -1148,7 +1158,7 @@ def covfilter(args):
     if opts.list:
         if qspair:
             allpairs = defaultdict(list)
-            for (q, s) in covidstore:
+            for q, s in covidstore:
                 allpairs[q].append((q, s))
                 allpairs[s].append((q, s))
 
@@ -1251,7 +1261,7 @@ def bed(args):
     Print out bed file based on coordinates in BLAST report. By default, write
     out subject positions. Use --swap to write query positions.
     """
-    from jcvi.formats.bed import sort as bed_sort
+    from .bed import sort as bed_sort, mergeBed
 
     p = OptionParser(bed.__doc__)
     p.add_option(
@@ -1265,6 +1275,12 @@ def bed(args):
         default=False,
         action="store_true",
         help="Generate one line for each of query and subject",
+    )
+    p.add_option(
+        "--merge",
+        default=None,
+        type="int",
+        help="Merge hits within this distance",
     )
 
     opts, args = p.parse_args(args)
@@ -1293,6 +1309,8 @@ def bed(args):
     logging.debug("File written to `%s`.", bedfile)
     fw.close()
     bed_sort([bedfile, "-i"])
+    if opts.merge:
+        mergeBed(bedfile, sorted=True, d=opts.merge, inplace=True)
 
     return bedfile
 
@@ -1315,6 +1333,42 @@ def pairs(args):
     args[args.index(blastfile)] = bedfile
 
     return jcvi.formats.bed.pairs(args)
+
+
+def anchors(args):
+    """
+    %prog anchors blastfile anchorsfile
+
+    Extract a subset of the BLAST file based on the anchors file. The anchors
+    file is a tab-delimited file with two columns, likely generated from synteny
+    pipeline. This is useful to filter down BLAST.
+    """
+    p = OptionParser(anchors.__doc__)
+    p.set_outfile()
+    p.add_option(
+        "--best", default=False, action="store_true", help="Keep only the best hit"
+    )
+    opts, args = p.parse_args(args)
+    if len(args) != 2:
+        sys.exit(not p.print_help())
+
+    blastfile, anchorsfile = args
+    anchor_file = AnchorFile(anchorsfile)
+    anchor_pairs = set((a, b) for a, b, _ in anchor_file.iter_pairs())
+    blast = Blast(blastfile)
+    found, total = 0, 0
+    fw = must_open(opts.outfile, "w")
+    seen = set()
+    for rec in blast:
+        pp = (rec.query, rec.subject)
+        if pp in anchor_pairs:
+            found += 1
+            if opts.best and pp in seen:
+                continue
+            print(rec, file=fw)
+            seen.add(pp)
+        total += 1
+    logging.info("Found %s", percentage(found, total))
 
 
 def best(args):
@@ -1385,6 +1439,10 @@ def summary(args):
 
     Provide summary on id% and cov%, for both query and reference. Often used in
     comparing genomes (based on NUCMER results).
+
+    Columns:
+    filename, identicals, qrycovered, pct_qrycovered, refcovered, pct_refcovered,
+    qryspan, pct_qryspan, refspan, pct_refspan
     """
     p = OptionParser(summary.__doc__)
     p.add_option(

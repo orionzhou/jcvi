@@ -1,6 +1,7 @@
 """
 Basic support for running library as script
 """
+
 import errno
 import os
 import time
@@ -22,12 +23,13 @@ from configparser import (
     ParsingError,
 )
 from socket import gethostname
-from subprocess import PIPE, call, check_call
+from subprocess import PIPE, call, check_output
 from optparse import OptionParser as OptionP, OptionGroup, SUPPRESS_HELP
 from typing import Any, Collection, List, Optional, Union
 
 from natsort import natsorted
-from rich.logging import Console, RichHandler
+from rich.console import Console
+from rich.logging import RichHandler
 
 from jcvi import __copyright__, __version__
 
@@ -36,6 +38,35 @@ nobreakbuffer = lambda: signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 nobreakbuffer()
 os.environ["LC_ALL"] = "C"
 JCVIHELP = "JCVI utility libraries {} [{}]\n".format(__version__, __copyright__)
+
+
+def debug(level=logging.DEBUG):
+    """
+    Turn on the debugging
+    """
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=Console(stderr=True))],
+    )
+
+
+debug()
+
+
+def get_logger(name: str, level: int = logging.DEBUG):
+    """Return a logger with a default ColoredFormatter."""
+    logger = logging.getLogger(name)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+    logger.addHandler(RichHandler(console=Console(stderr=True)))
+    logger.propagate = False
+    logger.setLevel(level)
+    return logger
+
+
+logger = get_logger("jcvi")
 
 
 class ActionDispatcher(object):
@@ -50,7 +81,6 @@ class ActionDispatcher(object):
     """
 
     def __init__(self, actions):
-
         self.actions = actions
         if not actions:
             actions = [(None, None)]
@@ -113,7 +143,6 @@ class ActionDispatcher(object):
 
 class OptionParser(OptionP):
     def __init__(self, doc):
-
         OptionP.__init__(self, doc, epilog=JCVIHELP)
 
     def parse_args(self, args=None):
@@ -170,24 +199,11 @@ class OptionParser(OptionP):
             help="Run on the grid",
         )
 
-    def set_grid_opts(self, array=False, vcode="99999"):
-        queue_choices = ("default", "fast", "medium", "himem")
-        valid_pcodes = popen("qconf -sprjl", debug=False).read().strip().split("\n")
-        valid_pcodes.append(vcode)
-
+    def set_grid_opts(self, array=False):
         group = OptionGroup(self, "Grid parameters")
-        group.add_option(
-            "-P",
-            dest="pcode",
-            default=vcode,
-            choices=valid_pcodes,
-            help="Specify accounting project code",
-        )
         group.add_option(
             "-l",
             dest="queue",
-            default="default",
-            choices=queue_choices,
             help="Name of the queue",
         )
         group.add_option(
@@ -455,7 +471,7 @@ class OptionParser(OptionP):
     ):
         if pctid is not None:
             self.add_option(
-                "--pctid", default=pctid, type="int", help="Sequence percent identity"
+                "--pctid", default=pctid, type="float", help="Sequence percent identity"
             )
         if hitlen is not None:
             self.add_option(
@@ -517,9 +533,20 @@ class OptionParser(OptionP):
         """
         Add image format options for given command line programs.
         """
-        from jcvi.graphics.base import GRAPHIC_FORMATS, ImageOptions, setup_theme
+        from jcvi.graphics.base import (
+            GRAPHIC_FORMATS,
+            ImageOptions,
+            is_tex_available,
+            setup_theme,
+        )
 
-        allowed_fonts = ("Helvetica", "Palatino", "Schoolbook", "Arial")
+        allowed_fonts = (
+            "Helvetica",
+            "Liberation Sans",
+            "Palatino",
+            "Schoolbook",
+            "Arial",
+        )
         allowed_styles = ("darkgrid", "whitegrid", "dark", "white", "ticks")
         allowed_diverge = (
             "BrBG",
@@ -584,9 +611,19 @@ class OptionParser(OptionP):
         assert opts.dpi > 0
         assert "x" in opts.figsize
 
-        setup_theme(style=opts.style, font=opts.font, usetex=(not opts.notex))
+        iopts = ImageOptions(opts)
 
-        return opts, args, ImageOptions(opts)
+        if opts.notex:
+            logger.info("--notex=%s. latex use is disabled.", opts.notex)
+        elif not is_tex_available():
+            if not bool(which("latex")):
+                logger.info("`latex` not found. latex use is disabled.")
+            if not bool(which("lp")):
+                logger.info("`lp` not found. latex use is disabled.")
+
+        setup_theme(style=opts.style, font=opts.font, usetex=iopts.usetex)
+
+        return opts, args, iopts
 
     def set_dotplot_opts(self, theme: int = 2) -> OptionGroup:
         """Used in compara.catalog and graphics.dotplot"""
@@ -1022,9 +1059,9 @@ def ConfigSectionMap(Config, section):
         try:
             cfg[option] = Config.get(section, option)
             if cfg[option] == -1:
-                logging.debug("skip: {0}".format(option))
+                logger.debug("skip: %s", option)
         except:
-            logging.debug("exception on {0}!".format(option))
+            logger.debug("exception on %s!", option)
             cfg[option] = None
     return cfg
 
@@ -1105,7 +1142,7 @@ def dmain(mainfile, type="action"):
 def backup(filename):
     bakname = filename + ".bak"
     if op.exists(filename):
-        logging.debug("Backup `{0}` to `{1}`".format(filename, bakname))
+        logger.debug("Backup `%s` to `%s`", filename, bakname)
         sh("mv {0} {1}".format(filename, bakname))
     return bakname
 
@@ -1136,6 +1173,7 @@ def sh(
     silent=False,
     shell="/bin/bash",
     check=False,
+    redirect_error=None,
 ):
     """
     simple wrapper for system calls
@@ -1178,10 +1216,10 @@ def sh(
             cmd += " &"
 
         if log:
-            logging.debug(cmd)
+            logger.debug(cmd)
 
-        call_func = check_call if check else call
-        return call_func(cmd, shell=True, executable=shell)
+        call_func = check_output if check else call
+        return call_func(cmd, shell=True, executable=shell, stderr=redirect_error)
 
 
 def Popen(cmd, stdin=None, stdout=PIPE, debug=False, shell="/bin/bash"):
@@ -1191,7 +1229,7 @@ def Popen(cmd, stdin=None, stdout=PIPE, debug=False, shell="/bin/bash"):
     from subprocess import Popen as P
 
     if debug:
-        logging.debug(cmd)
+        logger.debug(cmd)
     # See: <https://blog.nelhage.com/2010/02/a-very-subtle-bug/>
     proc = P(cmd, bufsize=1, stdin=stdin, stdout=stdout, shell=True, executable=shell)
     return proc
@@ -1222,7 +1260,7 @@ def which(program):
     "/bin/cat"
     >>> which("nosuchprogram")
     """
-    fpath, fname = op.split(program)
+    fpath, _ = op.split(program)
     if fpath:
         if is_exe(program):
             return program
@@ -1280,7 +1318,7 @@ def mkdir(dirname, overwrite=False):
         if overwrite:
             cleanup(dirname)
             os.mkdir(dirname)
-            logging.debug("Overwrite folder `{0}`.".format(dirname))
+            logger.debug("Overwrite folder `%s`", dirname)
         else:
             return False  # Nothing is changed
     else:
@@ -1288,7 +1326,7 @@ def mkdir(dirname, overwrite=False):
             os.mkdir(dirname)
         except:
             os.makedirs(dirname)
-        logging.debug("`{0}` not found. Creating new.".format(dirname))
+        logger.debug("`%s` not found. Creating new.", dirname)
 
     return True
 
@@ -1350,7 +1388,7 @@ def need_update(a: str, b: str, warn: bool = False) -> bool:
         or any(is_newer_file(x, y) for x in a for y in b)
     )
     if (not should_update) and warn:
-        logging.debug("File `{}` found. Computation skipped.".format(", ".join(b)))
+        logger.debug("File `%s` found. Computation skipped.", ", ".join(b))
     return should_update
 
 
@@ -1449,8 +1487,7 @@ def download(
     final_filename = filename or target
     if op.exists(final_filename):
         if debug:
-            msg = "File `{}` exists. Download skipped.".format(final_filename)
-            logging.info(msg)
+            logger.info("File `%s` exists. Download skipped.", final_filename)
         success = True
     else:
         from jcvi.utils.ez_setup import get_best_downloader
@@ -1500,28 +1537,12 @@ def getfilesize(filename, ratio=None):
     while size < heuristicsize:
         size += 2**32
     if size > 2**32:
-        logging.warning("Gzip file estimated uncompressed size: {0}.".format(size))
+        logger.warning("Gzip file estimated uncompressed size: %d", size)
 
     return size
 
 
-def debug(level=logging.DEBUG):
-    """
-    Turn on the debugging
-    """
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=Console(stderr=True))],
-    )
-
-
-debug()
-
-
 def main():
-
     actions = (
         ("less", "enhance the unix `less` command"),
         ("timestamp", "record timestamps for all files in the current folder"),
@@ -1577,7 +1598,7 @@ def expand(args):
     for a in args:
         oa = a.replace("/", "_")
         if oa in seen:
-            logging.debug("Name collision `{0}`, ignored.".format(oa))
+            logger.debug("Name collision `%s`, ignored", oa)
             continue
 
         cmd = "cp -s" if opts.symlink else "mv"
@@ -1655,7 +1676,6 @@ def touch(args):
 
 
 def snapshot(fp, p, fsize, counts=None):
-
     pos = int(p * fsize)
     print("==>> File `{0}`: {1} ({2}%)".format(fp.name, pos, int(p * 100)))
     fp.seek(pos)
@@ -1970,7 +1990,7 @@ def notify(args):
     opts, args = p.parse_args(args)
 
     if len(args) == 0:
-        logging.error("Please provide a brief message to be sent")
+        logger.error("Please provide a brief message to be sent")
         sys.exit(not p.print_help())
 
     subject = opts.subject
@@ -1980,7 +2000,7 @@ def notify(args):
         toaddr = opts.email.split(",")  # TO address should be in a list
         for addr in toaddr:
             if not is_valid_email(addr):
-                logging.debug("Email address `{0}` is not valid!".format(addr))
+                logger.debug("Email address `%s` is not valid!", addr)
                 sys.exit()
         send_email(fromaddr, toaddr, subject, message)
     else:
@@ -2140,7 +2160,7 @@ def waitpid(args):
             msg = check_output(shlex.split(get_origcmd)).strip()
         _waitpid(pid, interval=opts.interval)
     else:
-        logging.debug("Process with PID {0} does not exist".format(pid))
+        logger.debug("Process with PID %d does not exist", pid)
         sys.exit()
 
     if opts.notify:
@@ -2163,14 +2183,20 @@ def get_config(path):
         config.read(path)
     except ParsingError:
         e = sys.exc_info()[1]
-        logging.error(
-            "There was a problem reading or parsing "
-            "your credentials file: %s" % (e.args[0],),
+        logger.error(
+            "There was a problem reading or parsing your credentials file: %s",
+            e.args[0],
         )
     return config
 
 
-def getpath(cmd, name=None, url=None, cfg="~/.jcvirc", warn="exit"):
+def getpath(
+    cmd: str,
+    name: Optional[str] = None,
+    url: Optional[str] = None,
+    cfg: str = "~/.jcvirc",
+    warn: str = "exit",
+) -> Optional[str]:
     """
     Get install locations of common binaries
     First, check ~/.jcvirc file to get the full path
@@ -2193,30 +2219,33 @@ def getpath(cmd, name=None, url=None, cfg="~/.jcvirc", warn="exit"):
         fullpath = config.get(PATH, name)
     except NoSectionError:
         config.add_section(PATH)
-        changed = True
 
     try:
         fullpath = config.get(PATH, name)
     except NoOptionError:
-        msg = "=== Configure path for {0} ===\n".format(name, cfg)
+        msg = f"=== Configure path for {name} ===\n"
         if url:
-            msg += "URL: {0}\n".format(url)
-        msg += "[Directory that contains `{0}`]: ".format(cmd)
+            msg += f"URL: {url}\n"
+        msg += f"[Directory that contains `{cmd}`]: "
         fullpath = input(msg).strip()
-        config.set(PATH, name, fullpath)
-        changed = True
 
     path = op.join(op.expanduser(fullpath), cmd)
-    if warn == "exit":
-        try:
-            assert is_exe(path), "***ERROR: Cannot execute binary `{0}`. ".format(path)
-        except AssertionError as e:
-            sys.exit("{0!s}Please verify and rerun.".format(e))
+    if is_exe(path):
+        config.set(PATH, name, fullpath)
+        changed = True
+    else:
+        err_msg = f"Cannot execute binary `{path}`. Please verify and rerun."
+        if warn == "exit":
+            logger.fatal(err_msg)
+        else:
+            logger.warning(err_msg)
+        return None
 
     if changed:
         configfile = open(cfg, "w")
         config.write(configfile)
-        logging.debug("Configuration written to `{0}`.".format(cfg))
+        configfile.close()
+        logger.debug("Configuration written to `%s`", cfg)
 
     return path
 
