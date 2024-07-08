@@ -15,11 +15,12 @@ import numpy as np
 
 from natsort import natsorted
 
-from ..apps.base import OptionGroup, OptionParser, datafile, logger, sample_N
+from ..apps.base import OptionParser, datafile, logger, sample_N
 from ..formats.base import DictFile, get_number
 from ..formats.bed import Bed
 from ..formats.sizes import Sizes
-from ..graphics.base import (
+
+from .base import (
     CirclePolygon,
     Polygon,
     Rectangle,
@@ -31,7 +32,7 @@ from ..graphics.base import (
     set1_n,
     set3_n,
 )
-from ..graphics.glyph import BaseGlyph, plot_cap
+from .glyph import BaseGlyph, plot_cap
 
 
 class Chromosome(BaseGlyph):
@@ -59,7 +60,7 @@ class Chromosome(BaseGlyph):
         alternating shades. Use a list of starting locations to segment.
         """
         y1, y2 = sorted((y1, y2))
-        super(Chromosome, self).__init__(ax)
+        super().__init__(ax)
         pts, r = self.get_pts(x, y1, y2, width)
         self.append(Polygon(pts, fill=False, lw=lw, ec=ec, zorder=zorder))
         if patch:
@@ -111,7 +112,7 @@ class HorizontalChromosome(BaseGlyph):
         assert style in Chromosome.Styles, f"Unknown style `{style}`"
 
         x1, x2 = sorted((x1, x2))
-        super(HorizontalChromosome, self).__init__(ax)
+        super().__init__(ax)
         pts, r = self.get_pts(x1, x2, y, height, style=style)
         self.append(Polygon(pts, fill=False, lw=lw, ec=ec, zorder=zorder + 1))
 
@@ -234,7 +235,7 @@ class GeneticMap(BaseGlyph):
     def __init__(
         self, ax, x, y1, y2, markers, unit="cM", tip=0.008, fc="k", flip=False
     ):
-        super(GeneticMap, self).__init__(ax)
+        super().__init__(ax)
         # tip = length of the ticks
         y1, y2 = sorted((y1, y2))
         ax.plot([x, x], [y1, y2], "-", color=fc, lw=2)
@@ -284,7 +285,7 @@ class Gauge(BaseGlyph):
             extra (float): offset for the unit label
             fc (str): face color of the glyph
         """
-        super(Gauge, self).__init__(ax)
+        super().__init__(ax)
         ax.plot([x, x], [y1, y2], "-", color=fc, lw=2)
         r = y2 - y1
         yy = y2
@@ -426,50 +427,47 @@ def main():
     """
 
     p = OptionParser(main.__doc__)
-    p.add_option(
+    p.add_argument(
         "--sizes", help="FASTA sizes file, which contains chr<tab>size, one per line"
     )
-    g = OptionGroup(p, "Display accessories")
-    g.add_option(
+    g = p.add_argument_group("Display accessories")
+    g.add_argument(
         "--title",
         help="title of the image",
     )
-    g.add_option(
+    g.add_argument(
         "--gauge",
         default=False,
         action="store_true",
         help="draw a gauge with size label",
     )
-    p.add_option_group(g)
 
-    g = OptionGroup(p, "HTML image map")
-    g.add_option(
+    g = p.add_argument_group("HTML image map")
+    g.add_argument(
         "--imagemap",
         default=False,
         action="store_true",
         help="generate an HTML image map associated with the image",
     )
-    g.add_option(
+    g.add_argument(
         "--winsize",
         default=50000,
-        type="int",
+        type=int,
         help="if drawing an imagemap, specify the window size (bases) of each map element ",
     )
-    p.add_option_group(g)
 
-    g = OptionGroup(p, "Color legend")
-    g.add_option(
+    g = p.add_argument_group("Color legend")
+    g.add_argument(
         "--nolegend",
         dest="legend",
         default=True,
         action="store_false",
         help="Do not generate color legend",
     )
-    g.add_option(
-        "--mergedist", default=0, type="int", help="Merge regions closer than "
+    g.add_argument(
+        "--mergedist", default=0, type=int, help="Merge regions closer than "
     )
-    g.add_option("--empty", help="Write legend for unpainted region")
-    p.add_option_group(g)
+    g.add_argument("--empty", help="Write legend for unpainted region")
 
     opts, args, iopts = p.set_image_options(figsize="6x6", dpi=300)
 

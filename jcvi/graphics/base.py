@@ -3,14 +3,10 @@
 
 import copy
 import os.path as op
-from os import remove
-
+import re
 import sys
-import logging
 
-logging.getLogger("matplotlib").setLevel(logging.WARNING)
-logging.getLogger("numexpr").setLevel(logging.WARNING)
-logging.getLogger("PIL").setLevel(logging.INFO)
+from os import remove
 
 from functools import partial
 from typing import Optional, List, Tuple, Union
@@ -38,10 +34,11 @@ from matplotlib.patches import (
     FancyBboxPatch,
 )
 
-from ..apps.base import datadir, glob, listify, logger, sample_N, which
+from ..apps.base import datadir, glob, logger, sample_N, which
 from ..formats.base import LineFile
 from ..utils.cbook import human_size
 
+Extent = Tuple[float, float, float, float]
 
 CHARS = {
     "&": r"\&",
@@ -132,7 +129,7 @@ class AbstractLayout(LineFile):
     """
 
     def __init__(self, filename):
-        super(AbstractLayout, self).__init__(filename)
+        super().__init__(filename)
 
     def assign_array(self, attrib, array):
         assert len(array) == len(self)
@@ -155,6 +152,15 @@ class AbstractLayout(LineFile):
 
     def __str__(self):
         return "\n".join(str(x) for x in self)
+
+
+def adjust_extent(extent: Extent, root_extent: Extent) -> Extent:
+    """
+    Adjust the extent of the root axes.
+    """
+    rx, ry, rw, rh = root_extent
+    ex, ey, ew, eh = extent
+    return rx + ex * rw, ry + ey * rh, ew * rw, eh * rh
 
 
 def linear_blend(from_color, to_color, fraction=0.5):
@@ -194,7 +200,10 @@ def linear_shade(from_color, fraction=0.5):
     return linear_blend(from_color, "w", fraction)
 
 
-def load_image(filename):
+def load_image(filename: str) -> np.ndarray:
+    """
+    Load an image file and return as numpy array.
+    """
     img = plt.imread(filename)
     if len(img.shape) == 2:  # Gray-scale image, convert to RGB
         # http://www.socouldanyone.com/2013/03/converting-grayscale-to-rgb-with-numpy.html
@@ -275,11 +284,10 @@ def prettyplot():
 blues_r, reds, blue_red, green_purple, red_purple = prettyplot()
 
 
-def normalize_axes(axes):
+def normalize_axes(*axes):
     """
     Normalize the axes to have the same scale.
     """
-    axes = listify(axes)
     for ax in axes:
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
@@ -401,11 +409,14 @@ def fontprop(ax, name, size=12):
     return prop
 
 
-def markup(s):
+def markup(s: str):
+    """
+    Change the string to latex format, and italicize the text between *.
+    """
+    if not rcParams["text.usetex"]:
+        return s
     if "$" in s:
         return s
-    import re
-
     s = latex(s)
     s = re.sub(r"\*(.*)\*", r"\\textit{\1}", s)
     return s
@@ -508,7 +519,7 @@ def print_colors(palette, outfile="Palette.png"):
 
 def plot_heatmap(
     ax,
-    M: np.array,
+    M: np.ndarray,
     breaks: List[int],
     groups: List[Tuple[int, int, List[Tuple[int, str]], str]] = [],
     plot_breaks: bool = False,
@@ -697,7 +708,7 @@ def draw_cmap(ax, cmap_text, vmin, vmax, cmap=None, reverse=False):
         ax.text(x, ymin - 0.005, "%.1f" % v, ha="center", va="top", size=10)
 
 
-def write_messages(ax, messages, ypad=0.04):
+def write_messages(ax, messages: List[str], ypad: float = 0.04):
     """
     Write text on canvas, usually on the top right corner.
     """
@@ -705,7 +716,7 @@ def write_messages(ax, messages, ypad=0.04):
     axt = ax.transAxes
     yy = 0.95
     for msg in messages:
-        ax.text(0.95, yy, msg, color=tc, transform=axt, ha="right")
+        ax.text(0.95, yy, markup(msg), color=tc, transform=axt, ha="right")
         yy -= ypad
 
 

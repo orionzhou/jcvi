@@ -39,6 +39,7 @@ from ..graphics.base import (
     write_messages,
 )
 from ..utils.cbook import thousands, percentage
+
 from .automaton import iter_project
 
 
@@ -47,7 +48,7 @@ KMERYL, KSOAP, KALLPATHS = range(3)
 
 class KmerSpectrum(BaseFile):
     def __init__(self, histfile):
-        super(KmerSpectrum, self).__init__(histfile)
+        super().__init__(histfile)
         self.load_data(histfile)
 
     def load_data(self, histfile):
@@ -259,7 +260,7 @@ class KmerSpectrum(BaseFile):
         print(ll, rr, GG, file=sys.stderr)
 
         # Ready for genome summary
-        m = "\n==> Kmer (K={0}) Spectrum Analysis\n".format(K)
+        m = f"\n==> Kmer (K={K}) Spectrum Analysis\n"
 
         genome_size = int(round(self.totalKmers / ll))
         inferred_genome_size = 0
@@ -269,7 +270,7 @@ class KmerSpectrum(BaseFile):
             inferred_genome_size += g * mid * (end - start + 1)
         inferred_genome_size = int(round(inferred_genome_size))
         genome_size = max(genome_size, inferred_genome_size)
-        m += "Genome size estimate = {0}\n".format(thousands(genome_size))
+        m += f"Genome size estimate = {thousands(genome_size)}\n"
         copy_series = []
         copy_messages = []
         for i, g in enumerate(GG):
@@ -278,7 +279,7 @@ class KmerSpectrum(BaseFile):
             copy_num = start if start == end else "{}-{}".format(start, end)
             g_copies = int(round(g * mid * (end - start + 1)))
             copy_series.append((mid, copy_num, g_copies, g))
-            copy_message = f"CN {copy_num}: {g_copies / 1e6:.1f} Mb ({ g_copies * 100 / genome_size:.1f} percent)"
+            copy_message = f"CN {copy_num}: {g_copies / 1e6:.1f} Mb ({ g_copies * 100 / genome_size:.1f} %)"
             copy_messages.append(copy_message)
             m += copy_message + "\n"
 
@@ -286,7 +287,7 @@ class KmerSpectrum(BaseFile):
             g_copies = genome_size - inferred_genome_size
             copy_num = "{}+".format(end + 1)
             copy_series.append((end + 1, copy_num, g_copies, g_copies / (end + 1)))
-            m += f"CN {copy_num}: {g_copies / 1e6:.1f} Mb ({ g_copies * 100 / genome_size:.1f} percent)\n"
+            m += f"CN {copy_num}: {g_copies / 1e6:.1f} Mb ({ g_copies * 100 / genome_size:.1f} %)\n"
 
         # Determine ploidy
         def determine_ploidy(copy_series, threshold=0.15):
@@ -301,7 +302,7 @@ class KmerSpectrum(BaseFile):
 
         ploidy = determine_ploidy(copy_series)
         self.ploidy = ploidy
-        self.ploidy_message = "Ploidy: {}".format(ploidy)
+        self.ploidy_message = f"Ploidy: {ploidy}"
         m += self.ploidy_message + "\n"
         self.copy_messages = copy_messages[:ploidy]
 
@@ -316,7 +317,7 @@ class KmerSpectrum(BaseFile):
             return 1 - unique / genome_size
 
         repeats = calc_repeats(copy_series, ploidy, genome_size)
-        self.repetitive = "Repeats: {:.1f} percent".format(repeats * 100)
+        self.repetitive = f"Repeats: {repeats * 100:.1f} %"
         m += self.repetitive + "\n"
 
         # SNP rate
@@ -335,7 +336,7 @@ class KmerSpectrum(BaseFile):
             return 1 - (1 - L / genome_size) ** (1 / K)
 
         snp_rate = calc_snp_rate(copy_series, ploidy, genome_size, K)
-        self.snprate = "SNP rate: {:.2f} percent".format(snp_rate * 100)
+        self.snprate = f"SNP rate: {snp_rate * 100:.2f} %"
         m += self.snprate + "\n"
         print(m, file=sys.stderr)
 
@@ -474,22 +475,18 @@ class KmerSpectrum(BaseFile):
         GR = int(_genome_size_repetitive)
         coverage = int(_coverage)
 
-        m = "Kmer (K={0}) Spectrum Analysis\n".format(K)
-        m += "Genome size estimate = {0}\n".format(thousands(G))
-        m += "Genome size estimate CN = 1 = {0} ({1})\n".format(
-            thousands(G1), percentage(G1, G)
-        )
-        m += "Genome size estimate CN > 1 = {0} ({1})\n".format(
-            thousands(GR), percentage(GR, G)
-        )
-        m += "Coverage estimate: {0} x\n".format(coverage)
-        self.repetitive = "Repeats: {0} percent".format(GR * 100 // G)
+        m = f"Kmer (K={K}) Spectrum Analysis\n"
+        m += f"Genome size estimate = {thousands(G)}\n"
+        m += f"Genome size estimate CN = 1 = {thousands(G1)} ({percentage(G1, G)})\n"
+        m += f"Genome size estimate CN > 1 = {thousands(GR)} ({percentage(GR, G)})\n"
+        m += f"Coverage estimate: {coverage} x\n"
+        self.repetitive = f"Repeats: {GR * 100 // G} %"
 
         if ploidy == 2:
             d_SNP = int(_d_SNP)
-            self.snprate = "SNP rate ~= 1/{0}".format(d_SNP)
+            self.snprate = f"SNP rate ~= 1/{d_SNP}"
         else:
-            self.snprate = "SNP rate not computed (Ploidy = {0})".format(ploidy)
+            self.snprate = f"SNP rate not computed (Ploidy = {ploidy})"
         m += self.snprate + "\n"
 
         self.genomesize = int(round(self.totalKmers * 1.0 / self.max2))
@@ -624,8 +621,8 @@ def entropy(args):
     AAAAAAAAAAAGAAGAAAGAAA  34
     """
     p = OptionParser(entropy.__doc__)
-    p.add_option(
-        "--threshold", default=0, type="int", help="Complexity needs to be above"
+    p.add_argument(
+        "--threshold", default=0, type=int, help="Complexity needs to be above"
     )
     opts, args = p.parse_args(args)
 
@@ -684,38 +681,38 @@ def kmcop(args):
     Intersect or union kmc indices.
     """
     p = OptionParser(kmcop.__doc__)
-    p.add_option(
+    p.add_argument(
         "--action",
         choices=("union", "intersect", "reduce"),
         default="union",
         help="Action",
     )
-    p.add_option(
+    p.add_argument(
         "--ci_in",
         default=0,
-        type="int",
+        type=int,
         help="Exclude input kmers with less than ci_in counts",
     )
-    p.add_option(
+    p.add_argument(
         "--cs",
         default=0,
-        type="int",
+        type=int,
         help="Maximal value of a counter, only used when action is reduce",
     )
-    p.add_option(
+    p.add_argument(
         "--ci_out",
         default=0,
-        type="int",
+        type=int,
         help="Exclude output kmers with less than ci_out counts",
     )
-    p.add_option(
+    p.add_argument(
         "--batch",
         default=1,
-        type="int",
+        type=int,
         help="Number of batch, useful to reduce memory usage",
     )
-    p.add_option("--exclude", help="Exclude accessions from this list")
-    p.add_option("-o", default="results", help="Output name")
+    p.add_argument("--exclude", help="Exclude accessions from this list")
+    p.add_argument("-o", default="results", help="Output name")
     opts, args = p.parse_args(args)
 
     if len(args) < 2:
@@ -772,26 +769,26 @@ def kmc(args):
     Run kmc3 on Illumina reads.
     """
     p = OptionParser(kmc.__doc__)
-    p.add_option("-k", default=27, type="int", help="Kmer size")
-    p.add_option(
-        "--ci", default=2, type="int", help="Exclude kmers with less than ci counts"
+    p.add_argument("-k", default=27, type=int, help="Kmer size")
+    p.add_argument(
+        "--ci", default=2, type=int, help="Exclude kmers with less than ci counts"
     )
-    p.add_option("--cs", default=0, type="int", help="Maximal value of a counter")
-    p.add_option("--cx", type="int", help="Exclude kmers with more than cx counts")
-    p.add_option(
+    p.add_argument("--cs", default=0, type=int, help="Maximal value of a counter")
+    p.add_argument("--cx", type=int, help="Exclude kmers with more than cx counts")
+    p.add_argument(
         "--single",
         default=False,
         action="store_true",
         help="Input is single-end data, only one FASTQ/FASTA",
     )
-    p.add_option(
+    p.add_argument(
         "--fasta",
         default=False,
         action="store_true",
         help="Input is FASTA instead of FASTQ",
     )
-    p.add_option(
-        "--mem", default=48, type="int", help="Max amount of RAM in GB (`kmc -m`)"
+    p.add_argument(
+        "--mem", default=48, type=int, help="Max amount of RAM in GB (`kmc -m`)"
     )
     p.set_cpus()
     opts, args = p.parse_args(args)
@@ -838,7 +835,7 @@ def meryl(args):
     Run meryl on Illumina reads.
     """
     p = OptionParser(meryl.__doc__)
-    p.add_option("-k", default=19, type="int", help="Kmer size")
+    p.add_argument("-k", default=19, type=int, help="Kmer size")
     p.set_cpus()
     opts, args = p.parse_args(args)
 
@@ -879,8 +876,8 @@ def model(args):
     from scipy.stats import binom, poisson
 
     p = OptionParser(model.__doc__)
-    p.add_option("-k", default=23, type="int", help="Kmer size")
-    p.add_option("--cov", default=50, type="int", help="Expected coverage")
+    p.add_argument("-k", default=23, type=int, help="Kmer size")
+    p.add_argument("--cov", default=50, type=int, help="Expected coverage")
     opts, args = p.parse_args(args)
 
     if len(args) != 1:
@@ -1010,7 +1007,7 @@ def bincount(args):
     from jcvi.formats.sizes import Sizes
 
     p = OptionParser(bincount.__doc__)
-    p.add_option("-K", default=23, type="int", help="K-mer size")
+    p.add_argument("-K", default=23, type=int, help="K-mer size")
     p.set_outfile()
     opts, args = p.parse_args(args)
 
@@ -1073,7 +1070,7 @@ def dump(args):
     Convert FASTA sequences to list of K-mers.
     """
     p = OptionParser(dump.__doc__)
-    p.add_option("-K", default=23, type="int", help="K-mer size")
+    p.add_argument("-K", default=23, type=int, help="K-mer size")
     p.set_outfile()
     opts, args = p.parse_args(args)
 
@@ -1100,15 +1097,15 @@ def jellyfish(args):
     from jcvi.utils.cbook import human_size
 
     p = OptionParser(jellyfish.__doc__)
-    p.add_option("-K", default=23, type="int", help="K-mer size")
-    p.add_option(
+    p.add_argument("-K", default=23, type=int, help="K-mer size")
+    p.add_argument(
         "--coverage",
         default=40,
-        type="int",
+        type=int,
         help="Expected sequence coverage",
     )
-    p.add_option("--prefix", default="jf", help="Database prefix")
-    p.add_option(
+    p.add_argument("--prefix", default="jf", help="Database prefix")
+    p.add_argument(
         "--nohist",
         default=False,
         action="store_true",
@@ -1171,10 +1168,10 @@ def multihistogram(args):
     on Star et al.'s method (Atlantic Cod genome paper).
     """
     p = OptionParser(multihistogram.__doc__)
-    p.add_option("--kmin", default=15, type="int", help="Minimum K-mer size, inclusive")
-    p.add_option("--kmax", default=30, type="int", help="Maximum K-mer size, inclusive")
-    p.add_option("--vmin", default=2, type="int", help="Minimum value, inclusive")
-    p.add_option("--vmax", default=100, type="int", help="Maximum value, inclusive")
+    p.add_argument("--kmin", default=15, type=int, help="Minimum K-mer size, inclusive")
+    p.add_argument("--kmax", default=30, type=int, help="Maximum K-mer size, inclusive")
+    p.add_argument("--vmin", default=2, type=int, help="Minimum value, inclusive")
+    p.add_argument("--vmax", default=100, type=int, help="Maximum value, inclusive")
     opts, args, iopts = p.set_image_options(args, figsize="10x5", dpi=300)
 
     if len(args) < 1:
@@ -1349,37 +1346,37 @@ def histogram(args):
     only used to annotate the graphic.
     """
     p = OptionParser(histogram.__doc__)
-    p.add_option(
+    p.add_argument(
         "--vmin",
         dest="vmin",
         default=2,
-        type="int",
+        type=int,
         help="minimum value, inclusive",
     )
-    p.add_option(
+    p.add_argument(
         "--vmax",
         dest="vmax",
         default=200,
-        type="int",
+        type=int,
         help="maximum value, inclusive",
     )
-    p.add_option(
+    p.add_argument(
         "--method",
         choices=("nbinom", "allpaths"),
         default="nbinom",
         help="'nbinom' - slow but more accurate for het or polyploid genome; "
         + "'allpaths' - fast and works for homozygous enomes",
     )
-    p.add_option(
+    p.add_argument(
         "--maxiter",
         default=100,
-        type="int",
+        type=int,
         help="Max iterations for optimization. Only used with --method nbinom",
     )
-    p.add_option(
-        "--coverage", default=0, type="int", help="Kmer coverage [default: auto]"
+    p.add_argument(
+        "--coverage", default=0, type=int, help="Kmer coverage [default: auto]"
     )
-    p.add_option(
+    p.add_argument(
         "--nopeaks",
         default=False,
         action="store_true",

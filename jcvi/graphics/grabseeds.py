@@ -10,10 +10,15 @@ import string
 import sys
 
 from collections import Counter
+from datetime import date
 from math import cos, pi, sin
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
+
+from ..apps.base import setup_magick_home
+
+setup_magick_home()
 
 from PIL.Image import open as iopen
 from pyefd import elliptic_fourier_descriptors
@@ -22,12 +27,25 @@ from scipy.ndimage import binary_fill_holes, distance_transform_edt
 from scipy.optimize import fmin_bfgs as fmin
 from skimage.color import gray2rgb, rgb2gray
 from skimage.feature import canny, peak_local_max
-from skimage.filters import roberts, sobel
+from skimage.filters import roberts, sobel, threshold_otsu
 from skimage.measure import find_contours, regionprops, label
 from skimage.morphology import disk, closing
 from skimage.segmentation import clear_border, watershed
 from wand.image import Image
 from webcolors import rgb_to_hex, normalize_integer_triplet
+
+from ..algorithms.formula import get_kmeans, reject_outliers
+from ..apps.base import (
+    ActionDispatcher,
+    OptionParser,
+    datadir,
+    logger,
+    iglob,
+    mkdir,
+)
+from ..formats.base import must_open
+from ..formats.pdf import cat
+from ..utils.webcolors import closest_color
 
 from .base import (
     Rectangle,
@@ -38,19 +56,7 @@ from .base import (
     savefig,
     set_helvetica_axis,
 )
-from ..algorithms.formula import get_kmeans, reject_outliers
-from ..apps.base import (
-    OptionParser,
-    OptionGroup,
-    ActionDispatcher,
-    datadir,
-    logger,
-    iglob,
-    mkdir,
-)
-from ..formats.base import must_open
-from ..formats.pdf import cat
-from ..utils.webcolors import closest_color
+
 
 np.seterr(all="ignore")
 
@@ -86,7 +92,7 @@ class Seed(object):
         self.circularity = 4 * pi * props.area / props.perimeter**2
         self.rgb = rgb
         self.colorname = closest_color(rgb)
-        self.datetime = exif.get("exif:DateTimeOriginal", "none")
+        self.datetime = exif.get("exif:DateTimeOriginal", date.today())
         self.rgbtag = triplet_to_rgb(rgb)
         self.pixeltag = f"length={self.length} width={self.width} area={self.area}"
         self.hashtag = " ".join((self.rgbtag, self.colorname))
@@ -147,6 +153,56 @@ class Seed(object):
         self.correctedrgb = triplet_to_rgb(correctedrgb)
         self.correctedcolorname = closest_color(correctedrgb)
         self.calibrated = True
+
+
+def sam(img: np.ndarray, checkpoint: str) -> List[dict]:
+    """
+    Use Segment Anything Model (SAM) to segment objects.
+    """
+    try:
+        from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+    except ImportError:
+        logger.fatal("segment_anything not installed. Please install it first.")
+        sys.exit(1)
+
+    model_type = "vit_h"
+    if not op.exists(checkpoint):
+        raise AssertionError(
+            f"File `{checkpoint}` not found, please specify --sam-checkpoint"
+        )
+    sam = sam_model_registry[model_type](checkpoint=checkpoint)
+    logger.info("Using SAM model `%s` (%s)", model_type, checkpoint)
+    mask_generator = SamAutomaticMaskGenerator(sam)
+    return mask_generator.generate(img)
+
+
+def is_overlapping(mask1: dict, mask2: dict, threshold=0.5):
+    """
+    Check if bounding boxes of mask1 and mask2 overlap more than the given
+    threshold.
+    """
+    x1, y1, w1, h1 = mask1["bbox"]
+    x2, y2, w2, h2 = mask2["bbox"]
+    x_overlap = max(0, min(x1 + w1, x2 + w2) - max(x1, x2))
+    y_overlap = max(0, min(y1 + h1, y2 + h2) - max(y1, y2))
+    intersection = x_overlap * y_overlap
+    return intersection / min(w1 * h1, w2 * h2) > threshold
+
+
+def deduplicate_masks(masks: List[dict], threshold=0.5):
+    """
+    Deduplicate masks to retain only the foreground objects.
+    """
+    masks_sorted = sorted(masks, key=lambda x: x["area"])
+    retained_masks = []
+
+    for mask in masks_sorted:
+        if not any(
+            is_overlapping(mask, retained_mask, threshold)
+            for retained_mask in retained_masks
+        ):
+            retained_masks.append(mask)
+    return retained_masks
 
 
 def rgb_to_triplet(rgb: str) -> RGBTuple:
@@ -268,87 +324,86 @@ def add_seeds_options(p, args):
     """
     Add options to the OptionParser for seeds() and batchseeds() functions.
     """
-    g1 = OptionGroup(p, "Image manipulation")
-    g1.add_option("--rotate", default=0, type="int", help="Rotate degrees clockwise")
-    g1.add_option(
+    g1 = p.add_argument_group("Image manipulation")
+    g1.add_argument("--rotate", default=0, type=int, help="Rotate degrees clockwise")
+    g1.add_argument(
         "--rows", default=":", help="Crop rows e.g. `:800` from first 800 rows"
     )
-    g1.add_option(
+    g1.add_argument(
         "--cols", default=":", help="Crop cols e.g. `-800:` from last 800 cols"
     )
-    g1.add_option("--labelrows", help="Label rows e.g. `:800` from first 800 rows")
-    g1.add_option("--labelcols", help="Label cols e.g. `-800: from last 800 rows")
+    g1.add_argument("--labelrows", help="Label rows e.g. `:800` from first 800 rows")
+    g1.add_argument("--labelcols", help="Label cols e.g. `-800: from last 800 rows")
     valid_colors = ("red", "green", "blue", "purple", "yellow", "orange", "INVERSE")
-    g1.add_option(
+    g1.add_argument(
         "--changeBackground",
         default=0,
         choices=valid_colors,
         help="Changes background color",
     )
-    p.add_option_group(g1)
 
-    g2 = OptionGroup(p, "Object recognition")
-    g2.add_option(
+    g2 = p.add_argument_group("Object recognition")
+    g2.add_argument(
         "--minsize",
-        default=0.05,
-        type="float",
+        default=0.2,
+        type=float,
         help="Min percentage of object to image",
     )
-    g2.add_option(
-        "--maxsize", default=50, type="float", help="Max percentage of object to image"
+    g2.add_argument(
+        "--maxsize", default=20, type=float, help="Max percentage of object to image"
     )
-    g2.add_option(
-        "--count", default=100, type="int", help="Report max number of objects"
+    g2.add_argument(
+        "--count", default=100, type=int, help="Report max number of objects"
     )
-    g2.add_option(
+    g2.add_argument(
         "--watershed",
         default=False,
         action="store_true",
         help="Run watershed to segment touching objects",
     )
-    p.add_option_group(g2)
 
-    g3 = OptionGroup(p, "De-noise")
-    valid_filters = ("canny", "roberts", "sobel")
-    g3.add_option(
+    g3 = p.add_argument_group("De-noise")
+    valid_filters = ("canny", "otsu", "roberts", "sam", "sobel")
+    g3.add_argument(
         "--filter",
         default="canny",
         choices=valid_filters,
         help="Edge detection algorithm",
     )
-    g3.add_option(
+    g3.add_argument(
         "--sigma",
         default=1,
-        type="int",
+        type=int,
         help="Canny edge detection sigma, higher for noisy image",
     )
-    g3.add_option(
+    g3.add_argument(
         "--kernel",
         default=2,
-        type="int",
+        type=int,
         help="Edge closure, higher if the object edges are dull",
     )
-    g3.add_option(
-        "--border", default=5, type="int", help="Remove image border of certain pixels"
+    g3.add_argument(
+        "--border", default=5, type=int, help="Remove image border of certain pixels"
     )
-    p.add_option_group(g3)
+    g3.add_argument(
+        "--sam-checkpoint", default="sam_vit_h_4b8939.pth", help="SAM checkpoint file"
+    )
 
-    g4 = OptionGroup(p, "Output")
-    g4.add_option("--calibrate", help="JSON file to correct distance and color")
-    g4.add_option(
+    g4 = p.add_argument_group("Output")
+    g4.add_argument("--calibrate", help="JSON file to correct distance and color")
+    g4.add_argument(
         "--edges",
         default=False,
         action="store_true",
         help="Visualize edges in middle PDF panel",
     )
-    g4.add_option(
+    g4.add_argument(
         "--outdir", default=".", help="Store intermediate images and PDF in folder"
     )
-    g4.add_option("--prefix", help="Output prefix")
-    g4.add_option(
+    g4.add_argument("--prefix", help="Output prefix")
+    g4.add_argument(
         "--noheader", default=False, action="store_true", help="Do not print header"
     )
-    p.add_option_group(g4)
     opts, args, iopts = p.set_image_options(args, figsize="12x6", style="white")
 
     return opts, args, iopts
@@ -621,7 +676,7 @@ def seeds(args):
     ff = opts.filter
     calib = opts.calibrate
     outdir = opts.outdir
-    if outdir != ".":
+    if outdir and outdir != ".":
         mkdir(outdir)
     if calib:
         calib = json.load(must_open(calib))
@@ -645,36 +700,57 @@ def seeds(args):
     _, (ax1, ax2, ax3, ax4) = plt.subplots(ncols=4, nrows=1, figsize=(iopts.w, iopts.h))
     # Edge detection
     img_gray = rgb2gray(img)
-    logger.debug("Running %s edge detection ...", ff)
-    if ff == "canny":
-        edges = canny(img_gray, sigma=opts.sigma)
-    elif ff == "roberts":
-        edges = roberts(img_gray)
-    elif ff == "sobel":
-        edges = sobel(img_gray)
-    edges = clear_border(edges, buffer_size=opts.border)
-    selem = disk(kernel)
-    closed = closing(edges, selem) if kernel else edges
-    filled = binary_fill_holes(closed)
-
-    # Watershed algorithm
-    if opts.watershed:
-        distance = distance_transform_edt(filled)
-        local_maxi = peak_local_max(distance, threshold_rel=0.05, indices=False)
-        coordinates = peak_local_max(distance, threshold_rel=0.05)
-        markers, nmarkers = label(local_maxi, return_num=True)
-        logger.debug("Identified %d watershed markers", nmarkers)
-        labels = watershed(closed, markers, mask=filled)
-    else:
-        labels = label(filled)
-
-    # Object size filtering
     w, h = img_gray.shape
     canvas_size = w * h
     min_size = int(round(canvas_size * opts.minsize / 100))
     max_size = int(round(canvas_size * opts.maxsize / 100))
+
+    logger.debug("Running %s edge detection …", ff)
+    if ff == "canny":
+        edges = canny(img_gray, sigma=opts.sigma)
+    elif ff == "otsu":
+        thresh = threshold_otsu(img_gray)
+        edges = img_gray > thresh
+    elif ff == "roberts":
+        edges = roberts(img_gray)
+    elif ff == "sobel":
+        edges = sobel(img_gray)
+    if ff == "sam":
+        masks = sam(img, opts.sam_checkpoint)
+        filtered_masks = [
+            mask for mask in masks if min_size <= mask["area"] <= max_size
+        ]
+        deduplicated_masks = deduplicate_masks(filtered_masks)
+        logger.info(
+            "SAM: %d (raw) → %d (size filtered) → %d (deduplicated)",
+            len(masks),
+            len(filtered_masks),
+            len(deduplicated_masks),
+        )
+        labels = np.zeros(img_gray.shape, dtype=int)
+        for i, mask in enumerate(deduplicated_masks):
+            labels[mask["segmentation"]] = i + 1
+        labels = clear_border(labels)
+    else:
+        edges = clear_border(edges, buffer_size=opts.border)
+        selem = disk(kernel)
+        closed = closing(edges, selem) if kernel else edges
+        filled = binary_fill_holes(closed)
+
+        # Watershed algorithm
+        if opts.watershed:
+            distance = distance_transform_edt(filled)
+            local_maxi = peak_local_max(distance, threshold_rel=0.05, indices=False)
+            coordinates = peak_local_max(distance, threshold_rel=0.05)
+            markers, nmarkers = label(local_maxi, return_num=True)
+            logger.debug("Identified %d watershed markers", nmarkers)
+            labels = watershed(closed, markers, mask=filled)
+        else:
+            labels = label(filled)
+
+    # Object size filtering
     logger.debug(
-        "Find objects with pixels between %d (%d%%) and %d (%d%%)",
+        "Find objects with pixels between %d (%.2f%%) and %d (%d%%)",
         min_size,
         opts.minsize,
         max_size,
@@ -689,7 +765,8 @@ def seeds(args):
     if opts.watershed:
         params += ", watershed"
     ax2.set_title(f"Edge detection\n({params})")
-    closed = gray2rgb(closed)
+    if ff != "sam":
+        closed = gray2rgb(closed)
     ax2_img = labels
     if opts.edges:
         ax2_img = closed
@@ -709,6 +786,7 @@ def seeds(args):
     # Calculate region properties
     rp = regionprops(labels)
     rp = [x for x in rp if min_size <= x.area <= max_size]
+    rp.sort(key=lambda x: x.area, reverse=True)
     nb_labels = len(rp)
     logger.debug("A total of %d objects identified.", nb_labels)
     objects = []
