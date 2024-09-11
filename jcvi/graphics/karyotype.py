@@ -121,6 +121,7 @@ def make_circle_name(sid, rev):
 
     in_reverse = sid in rev
     sid = sid.rsplit("_", 1)[-1]
+    sid = sid.replace("chr", "").replace("Chr", "")
     si = re.findall(r"\d+", sid)
     if si:
         si = str(int(si[0]))
@@ -361,7 +362,8 @@ class Karyotype(object):
         di = lambda x: x[:-1] if x[-1] == "-" else x
         # Comments can cause layout and seqids to be out of sync
         # https://github.com/tanghaibao/jcvi/issues/676
-        for i, row in enumerate(_ for _ in fp if not _.startswith("#")):
+        for i, row in enumerate(_ for _ in fp if not _.startswith("#") and _.strip()):
+            logger.info("Processing `%s` (track %d)", row.strip(), i)
             t = layout[i]
             # There can be comments in seqids file:
             # https://github.com/tanghaibao/jcvi/issues/335
