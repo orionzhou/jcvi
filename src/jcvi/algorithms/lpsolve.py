@@ -334,7 +334,7 @@ class SCIPSolver(AbstractMIPSolver):
             if row.strip() == "":  # blank line ends the section
                 break
             x = row.split()[0]
-            results.append(int(x[1:]) - 1)  # 0-based indexing
+            results.append(int(x[1:]))  # 0-based indexing
 
         if results:
             self.obj_val = flexible_cast(obj_row.split(":")[1].strip())
